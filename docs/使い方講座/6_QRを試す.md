@@ -28,6 +28,9 @@ import PlaygroundSupport          // Playgroundsで表示する用
 #endif
 
 // ── QR画像を作る（共通の処理）────────────────
+/// 文字列から QR 画像を作る。
+/// - Parameter text: QR に埋め込む文字列（例: 商品ID `"KH-008"`）
+/// - Returns: 生成した画像。失敗したときは `nil`
 func makeQR(_ text: String) -> QRImage? {
     let filter = CIFilter.qrCodeGenerator()   // Apple公式のQR生成
     filter.message = Data(text.utf8)          // 中身 = 商品IDそのもの
@@ -50,6 +53,9 @@ func makeQR(_ text: String) -> QRImage? {
 }
 
 // ── 画像を画面に出せる形に変える（ここだけ違う）──
+/// QR画像を SwiftUI で表示できる `Image` に変換する。
+/// - Parameter img: `makeQR` などで作った画像
+/// - Returns: 画面に出せる `Image`
 func qrSwiftImage(_ img: QRImage) -> Image {
     #if os(macOS)
     return Image(nsImage: img)     // Mac
@@ -59,6 +65,7 @@ func qrSwiftImage(_ img: QRImage) -> Image {
 }
 
 // ── 画面 ────────────────────────────────
+/// 商品IDの QR を1枚表示する練習用の画面。
 struct QRView: View {
     var body: some View {
         VStack(spacing: 12) {
@@ -104,6 +111,18 @@ PlaygroundPage.current.setLiveView(QRView())
 - 中身は `Data(text.utf8)` ＝**商品IDの文字列そのもの**（方針どおり）
 - 小さいまま拡大すると**ぼやける**ので、`transform` で拡大 → 表示時に `.interpolation(.none)`
 - 商品IDを変えたい時は `makeQR("KH-008")` の文字を変えるだけ
+
+## ドキュメントコメント（`///`）
+関数の上に `///` で説明を書ける（JSの**JSDocにあたる**もの）。
+- **コメントなので日本語でOK**。実行・呼び出し方には影響しない
+- `- Parameter 名前:` で引数、`- Returns:` で戻り値の説明を書く
+- Xcodeではこの説明が**Quick Help**（補完や⌥クリック）に出る
+```swift
+/// 文字列から QR 画像を作る。
+/// - Parameter text: QR に埋め込む文字列（例: 商品ID `"KH-008"`）
+/// - Returns: 生成した画像。失敗したときは `nil`
+func makeQR(_ text: String) -> QRImage? { ... }
+```
 
 ## 次にやること（後で）
 - 読み取り（カメラ）は Apple公式の **Vision**（`VNDetectBarcodesRequest`）。カメラの許可が要る（`5_Xcodeでプロジェクト作成.md` 参照）
