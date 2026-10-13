@@ -1,4 +1,4 @@
-# Svelteで理解するSwift
+# Svelte5で理解するSwift
 
 Svelteが分かる人向けに、Swift / SwiftUI / Xcode を**対応づけて**説明する資料。
 「あれはSvelteでいう何？」と思ったらここを見る。
@@ -23,13 +23,14 @@ Svelteが分かる人向けに、Swift / SwiftUI / Xcode を**対応づけて**�
 | `.svelte` ファイル | `struct ○○: View { var body: some View }` |
 | `.ts` ファイル | 普通の `.swift`（`func` / `class` / `struct`） |
 | コンポーネントを入れ子 | Viewの中にViewを入れる |
-| `export let prop` | Viewのプロパティ `let prop: String`（外から渡す） |
+| `let { prop } = $props()` | Viewのプロパティ `let prop: String`（外から渡す） |
 | `bind:value`（双方向） | `@Binding var value` |
-| `let count = 0`＋`$:`（リアクティブ） | `@State var count = 0` |
-| 派生値 `$: x = a*2` | 計算プロパティ `var x: Int { a*2 }` |
+| `let count = $state(0)` | `@State var count = 0` |
+| 派生値 `let x = $derived(a*2)` | 計算プロパティ `var x: Int { a*2 }` |
+| `$effect(() => {})` | `.onChange { }` / `.task { }` / `.onAppear { }` |
 | store（`writable`） | `@Observable` クラス（古: `ObservableObject`＋`@Published`） |
 | グローバルなstore | 共有した `@Observable` を `@Environment` で配る |
-| `on:click={fn}` | `Button("...") { fn() }` / `.onTapGesture { }` |
+| `onclick={fn}` | `Button("...") { fn() }` / `.onTapGesture { }` |
 | `{#if x}...{/if}` | `if x { ... }`（bodyの中） |
 | `{#each items as item}` | `ForEach(items, id: \.self) { item in ... }` |
 | `<slot/>` | `@ViewBuilder` のクロージャプロパティ |
@@ -49,11 +50,11 @@ Svelteが分かる人向けに、Swift / SwiftUI / Xcode を**対応づけて**�
 **Svelte**
 ```svelte
 <script lang="ts">
-  export let label: string;
-  let count = 0;
+  let { label } = $props();
+  let count = $state(0);
 </script>
 
-<button on:click={() => count++}>{label}: {count}</button>
+<button onclick={() => count++}>{label}: {count}</button>
 ```
 
 **SwiftUI**
@@ -61,11 +62,11 @@ Svelteが分かる人向けに、Swift / SwiftUI / Xcode を**対応づけて**�
 import SwiftUI
 
 struct CounterButton: View {
-    let label: String                  // export let 相当（外から渡す）
-    @State var count = 0               // 画面が持つ状態
+    let label: String                  // $props() 相当（外から渡す）
+    @State var count = 0               // $state 相当（画面が持つ状態）
 
     var body: some View {              // ← ここがマークアップ
-        Button("\(label): \(count)") { // ← on:click 相当
+        Button("\(label): \(count)") { // ← onclick 相当
             count += 1
         }
     }
@@ -105,18 +106,18 @@ struct RegisterView: View {
 **Svelte**
 ```svelte
 <script>
-  let qty = 1;
+  let qty = $state(1);
   let price = 300;
-  $: subtotal = qty * price;
+  let subtotal = $derived(qty * price);
 </script>
 ```
 
 **SwiftUI**
 ```swift
 struct Line: View {
-    @State var qty = 1
+    @State var qty = 1                        // $state 相当
     let price = 300
-    var subtotal: Int { qty * price }   // 派生値は計算プロパティ
+    var subtotal: Int { qty * price }   // $derived 相当（計算プロパティ）
     var body: some View { Text("¥\(subtotal)") }
 }
 ```

@@ -67,10 +67,12 @@ func qrSwiftImage(_ img: QRImage) -> Image {
 // ── 画面 ────────────────────────────────
 /// 商品IDの QR を1枚表示する練習用の画面。
 struct QRView: View {
+    let productID = "KH-008"   // ← 変えたい時はここ1か所だけ
+
     var body: some View {
         VStack(spacing: 12) {
-            Text("KH-008").font(.headline)
-            if let img = makeQR("KH-008") {
+            Text(productID).font(.headline)
+            if let img = makeQR(productID) {
                 qrSwiftImage(img)
                     .interpolation(.none)   // カリカリのまま
                     .resizable()
@@ -110,7 +112,7 @@ PlaygroundPage.current.setLiveView(QRView())
 - `CIFilter.qrCodeGenerator()` は**Apple公式**。`import CoreImage.CIFilterBuiltins` で使える
 - 中身は `Data(text.utf8)` ＝**商品IDの文字列そのもの**（方針どおり）
 - 小さいまま拡大すると**ぼやける**ので、`transform` で拡大 → 表示時に `.interpolation(.none)`
-- 商品IDを変えたい時は `makeQR("KH-008")` の文字を変えるだけ
+- 商品IDを変えたい時は `QRView` の `let productID = "KH-008"` の文字を変えるだけ（表示とQRの両方に効く）
 
 ## ドキュメントコメント（`///`）
 関数の上に `///` で説明を書ける（JSの**JSDocにあたる**もの）。
@@ -123,6 +125,7 @@ PlaygroundPage.current.setLiveView(QRView())
 /// - Returns: 生成した画像。失敗したときは `nil`
 func makeQR(_ text: String) -> QRImage? { ... }
 ```
+
 
 ## 次にやること（後で）
 - 読み取り（カメラ）は Apple公式の **Vision**（`VNDetectBarcodesRequest`）。カメラの許可が要る（`5_Xcodeでプロジェクト作成.md` 参照）
