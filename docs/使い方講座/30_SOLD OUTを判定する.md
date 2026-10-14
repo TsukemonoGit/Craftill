@@ -109,7 +109,7 @@ enum PanelState {
 }
 ```
 
-- `var label: String { ... }` は**計算プロパティ**（`1_初心者メモ.md` 参照）
+- `var label: String { ... }` は**計算プロパティ**（`01_初心者メモ.md` 参照）
 - `self == .normal` は「自分が `.normal` のときだけ true」
 
 ---

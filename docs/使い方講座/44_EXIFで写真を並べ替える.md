@@ -36,7 +36,7 @@ func date(_ s: String) -> Date {
 }
 ```
 
-`Date?` の `?` は「あるかも / 空っぽかも」（`1_初心者メモ.md` のオプショナル）。
+`Date?` の `?` は「あるかも / 空っぽかも」（`01_初心者メモ.md` のオプショナル）。
 
 ---
 
@@ -67,7 +67,7 @@ func sortDate(_ photo: PhotoFile) -> Date {
 }
 ```
 
-- `photo.exifDate ?? photo.modifiedDate` … `??` は「左が空っぽなら右を使う」（`1_初心者メモ.md`）。
+- `photo.exifDate ?? photo.modifiedDate` … `??` は「左が空っぽなら右を使う」（`01_初心者メモ.md`）。
 - `.distantFuture` … Dateの「果てしなく先」。日時が無い写真を最後に置くための目印。
 
 ---

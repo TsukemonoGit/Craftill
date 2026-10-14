@@ -52,7 +52,7 @@ func isPinSet() -> Bool {
 ```
 
 - `pin.allSatisfy { $0.isNumber }` … 全部の文字が数字かどうか
-- `UserDefaults.standard.set(...)` … 端末の簡単な保存場所に書く（`3_レッスン.md` の保存と同じ）
+- `UserDefaults.standard.set(...)` … 端末の簡単な保存場所に書く（`03_レッスン.md` の保存と同じ）
 
 ---
 
