@@ -100,6 +100,48 @@ case .blue: print("青")
 - 全ケースを書くか `default:` を付ける。C# の switch 文は網羅を要求しない
 - C# と同じく流れ落ちない。ただし `break` は不要（C# は必要）
 
+### switchで複数のケースに同じ処理を書く
+
+#### `,` で並べる
+```swift
+enum Color { case red, blue, green, yellow }
+let c = Color.red
+
+switch c {
+case .red, .yellow:      // red または yellow
+    print("暖色")
+case .blue, .green:      // blue または green
+    print("寒色")
+}
+```
+
+#### 残りをまとめて `default`
+```swift
+switch c {
+case .red:
+    print("赤")
+default:                 // red 以外すべて
+    print("赤以外")
+}
+```
+
+#### Int の範囲も書ける
+```swift
+let n = 5
+
+switch n {
+case 0:
+    print("ゼロ")
+case 1...9:              // 1 から 9
+    print("1桁")
+default:
+    print("2桁以上")
+}
+```
+
+- C# の `case A: case B:` と並べる書き方は、Swiftでは `case .a, .b:` と1行にする
+- 1つの `case` には、1つ以上の文が必要
+
 ## 11. `++` / `--` がない
 ```swift
 var i = 0
