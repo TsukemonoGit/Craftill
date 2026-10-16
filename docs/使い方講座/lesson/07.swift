@@ -66,3 +66,6 @@ func message(_ r:AddResult) -> String{
 }
 
 
+func addToCart(_ product , to cart: inout [CartLine] ){
+    
+}
