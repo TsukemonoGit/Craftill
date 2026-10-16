@@ -139,7 +139,6 @@ default:
     print("2桁以上")
 }
 ```
-
 - C# の `case A: case B:` と並べる書き方は、Swiftでは `case .a, .b:` と1行にする
 - 1つの `case` には、1つ以上の文が必要
 
@@ -189,7 +188,7 @@ for i in 0...3 { print(i) }    // 0, 1, 2, 3
 ## 17. 行末の `;` は不要
 改行が文の区切り。1行に複数の文を書くときだけ `;` を使う。
 
-## 18. エラー処理は `throws` / `try`
+## 18. エラー処理は `throws` / `try` / `try?` / `try!`
 ```swift
 enum MyError: Error { case bad }
 
@@ -197,16 +196,33 @@ func g(_ x: Int) throws -> Int {
     if x < 0 { throw MyError.bad }
     return x
 }
+```
+- C# / JS は例外を `throw` するだけで、呼び出し側に `try` を書く義務はない。Swiftは `throws` 付きの関数を呼ぶ際、必ず `try`（または `try?` / `try!`）を明示する必要がある。
 
+### 通常の `try`（`do-catch` と組み合わせる）
+```swift
 do {
     let r = try g(1)       // throws の関数を呼ぶときは try が必須
     print(r)
 } catch {
-    print("失敗")
+    print("失敗: \(error)") // MyError.bad などがここに入る
 }
 ```
-- C# は例外を `throw` するだけで、呼び出し側の記述は不要
-- Swiftは `throws` の関数を呼ぶとき `try` を書く
+
+### `try?`（エラー時に `nil` を返す）
+```swift
+let r1 = try? g(1)   // Int? 型になる。成功時は 1、失敗時は nil
+let r2 = try? g(-1)  // nil になる（エラー内容は破棄される）
+```
+- C# / JS にはない構文。「成功した値」か「失敗して nil」の2択で扱いたい場合に便利。エラーの詳細が不要なときに `do-catch` を省略できる。
+- 戻り値の型は自動的に Optional（`Int?` など）になる。
+
+### `try!`（失敗時に強制クラッシュ）
+```swift
+let r3 = try! g(1)   // Int 型になる。成功時は 1
+// let r4 = try! g(-1) // 実行時にクラッシュする
+```
+- 「この引数なら絶対にエラーにならない」と確信できる場合のみ使用する。C# で例外が来ないとわかっている場合に `catch` を書かないのと似ているが、Swiftでは万が一エラーになるとアプリが落ちるため注意が必要。
 
 ## 19. インスタンス生成に `new` は不要
 ```swift
