@@ -1,3 +1,6 @@
+//----------  5
+import Foundation
+
 //----------  1
 //------------①
 // 変数と定数
@@ -96,7 +99,7 @@ enum StockMode{
 let sticker = Product(id: "ST-001",name:"ステッカー",priceJpy:300,priceSats:500,stock:10)
 
 print(sticker.id)
-print(sticker.priceSats)
+print(sticker.priceSats ?? 0)
 if let sats = sticker.priceSats{
     print(sats)
 }
@@ -155,6 +158,14 @@ print("円払い:\(t.cashJpy)円")
 
 //----------  5
 func normalizeID(_ raw: String) -> String {
-    let upper = raw.uppercased()
-    let letters = upper.filter {$0.isLetter}
+    let upper: String = raw.uppercased()
+    let letters: String = upper.filter {$0.isLetter}
+    let digits: String = upper.filter{$0.isNumber}
+    let n: Int = Int(digits) ?? 0
+    return letters + "-" + String(format: "%03d", n)
 }
+
+
+print(normalizeID("kh08"))
+print(normalizeID("KH-020"))
+print(normalizeID("st 1"))
