@@ -64,5 +64,5 @@ func product(_ id: String) -> Product { products.first { $0.id == id }! }
 //----------------
 //減らしてよいか？
 func checkStock(_ cart: [CartLine], inventory: [Product]) -? String? {
-    
+
 }
