@@ -64,14 +64,86 @@ func product(_ id: String) -> Product { products.first { $0.id == id }! }
 //----------------
 //カート内の全ての商品が本当に購入可能か？
 ///在庫不足があれば理由[文字列]を返す。問題なければ空[]
-func checkStock(_ cart: [CartLine], inventory: [Product]) -? [String] {
-   var problems: [String] = []
-   var checked: Set<String> = [] //判定済みの商品ID(報告の重複チェック)
-   
+func checkStock(_ cart: [CartLine], inventory: [Product]) -> [String]{
+   var problems: [String] = []  
 
    //カートのなかで、管理ありの行だけみる(野良除外)
    for line in cart where line.product.stockMode != .none {
-    let id = line.product.id
+    
+    guard let current = inventory.first(where: {$0.id == line.product.id}),
+        let stock = current.stock else {continue}
 
+    if line.qty > stock {
+        problems.append("在庫不足: \(current.name) (在庫: \(stock) , 必要: \(line.qty))")
+    }
    }
+   return problems
 }
+
+
+//試す
+func run(_ label: String, _ cart: [CartLine], inventory: [Product] = products) {
+    let problems = checkStock(cart, inventory: inventory)
+    print("[\(label)]")
+    print(problems.isEmpty ? "  購入可能" : problems.map { "  " + $0 }.joined(separator: "\n"))
+}
+
+// 1. 正常
+run("1 正常", [
+    CartLine(product: product("ST-001"), qty: 2),
+    CartLine(product: product("KH-001"), qty: 1),
+])
+
+// 2. ステッカー在庫超過（在庫10に対して11）
+run("2 数量超過", [
+    CartLine(product: product("ST-001"), qty: 11),
+])
+
+// 3. 在庫ちょうど（境界値）
+run("3 在庫ちょうど", [
+    CartLine(product: product("ST-001"), qty: 10),
+])
+
+// 4. 一点物を2個
+run("4 一点物2個", [
+    CartLine(product: product("KH-001"), qty: 2),
+])
+
+// 5. 複数行で同時に不足
+run("5 複数不足", [
+    CartLine(product: product("ST-002"), qty: 11),
+    CartLine(product: product("KH-003"), qty: 2),
+    CartLine(product: product("ST-003"), qty: 1),   // これは問題なし
+])
+
+// 6. 空カート
+run("6 空カート", [])
+
+// 7. カート投入後に在庫が減った場合（cart側のstockは古いまま）
+var changed = products
+if let i = changed.firstIndex(where: { $0.id == "ST-001" }) {
+    changed[i].stock = 1
+}
+run("7 在庫変動後", [
+    CartLine(product: product("ST-001"), qty: 2),   // product.stock は10のまま
+], inventory: changed)
+
+// 8. inventory に存在しない商品
+let ghost = Product(id: "XX-999", typeId: "sticker", name: "存在しない商品",
+                    priceJpy: 100, priceSats: nil, stock: 5, stockMode: .counted)
+run("8 在庫表に無い商品", [
+    CartLine(product: ghost, qty: 99),
+])
+
+// 9. 在庫管理なし型（.none）
+let noStock = Product(id: "FR-001", typeId: "free", name: "在庫管理なし商品",
+                      priceJpy: 100, priceSats: nil, stock: nil, stockMode: .none)
+run("9 在庫管理なし", [
+    CartLine(product: noStock, qty: 100),
+], inventory: products + [noStock])
+
+// 10. 同一商品が2行に分かれている
+run("10 同一商品2行", [
+    CartLine(product: product("ST-001"), qty: 6),
+    CartLine(product: product("ST-001"), qty: 6),   // 合計12 > 在庫10
+])
