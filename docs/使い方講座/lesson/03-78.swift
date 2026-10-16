@@ -1,5 +1,6 @@
-// playgroundでやる
+// 7-playgroundでやる
 
+// ----------  8
 import Foundation
 
 let homeDirectory = NSHomeDirectory()
