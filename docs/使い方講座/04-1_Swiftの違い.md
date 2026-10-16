@@ -89,7 +89,104 @@ func f(_ x: Int) {
 ```
 C# の引数は変更できる。
 
-## 10. switch は網羅が必須。`break` は不要
+## 10. enum は「関連値」を持てる。switch は「パターンマッチング」
+
+### enum は関連値（Associated Values）を持てる
+C# や TS の enum は単なる数値の別名だが、Swift の enum はケースごとに「異なる型や複数の値」を保持できる（TS の判別共用体 / Union 型に近い）。
+
+```swift
+struct Product { let name: String }
+
+// カート行
+struct CartLine {
+    let product: Product
+    var qty: Int
+}
+
+// 追加結果（成功時は商品と数量、失敗時はエラー理由を持つ）
+enum AddResult {
+    case added(Product, qty: Int)  // 1つ目は型のみ、2つ目は qty というラベル付き
+    case failed(String)
+}
+
+func message(_ r: AddResult) -> String {
+    switch r {
+    case .added(let p, let qty):     // 関連値を p と qty として取り出す（値の束縛）
+        return "追加: \(p.name) × \(qty)"
+    case .failed(let reason):
+        return "エラー: \(reason)"
+    }
+}
+```
+- `case added(Product, qty: Int)` のように、ケースごとに保持するデータ型を定義できる。
+- `switch` 文の中で `let p, let qty` のように書くことで、格納されている値を変数として取り出せる（これを「値の束縛 / バインディング」と呼ぶ）。
+- ラベル（`qty:`）は任意だが、意味を明確にしたい場合に付ける。`Product` のように型名だけで意味が明らかな場合は省略されることが多い。
+
+### Swift の switch は「パターンマッチング」
+C# や JS の `switch` は「値の一致を判定するだけ」だが、**Swift の `switch` は「データ構造を分解するパターンマッチング」** である。これが最大の違い。
+
+```swift
+// ① 値の一致を判定
+case .added(Product(name: "りんご"), qty: 3):
+
+// ② 型の一致だけを判定（値は無視）
+case .added(_, _):
+
+// ③ 条件付きで判定（where 句）
+case .added(let p, let qty) where qty > 0:
+
+// ④ 値を取り出す（バインディング）← これが最も一般的
+case .added(let p, let qty):
+```
+
+これらはすべて「パターン」としての `case` の使い方であり、**`let` の有無で「値の一致」と「値の取り出し」を区別している**。
+
+#### なぜ `let` が必要なのか？
+もし `let` なしで `case .added(p, qty):` と書くと、それは「外で宣言した変数 `p` と `qty` の値と一致するか」を判定する意味になる。
+
+```swift
+let p = Product(name: "りんご")  // 外で宣言
+let qty = 3                      // 外で宣言
+
+switch r {
+case .added(p, qty):             // r.added の中身が、外の変数 p と qty と「一致するか」を判定
+    print("一致した")
+}
+```
+
+つまり、**「外で宣言した変数に代入する」方式は、Swift の「パターンマッチングで値を取り出す」機能とは互換性がない**ため、`case` の中で `let` を使って「この case ブロック内だけで使える新しい変数を宣言する」方式になっている。
+
+#### `.` の正体：型名のショートカット
+`case .added(let p, let qty):` の `.` は「型名（`AddResult`）の省略」。
+
+```swift
+// ① 型名をちゃんと書いた場合
+case AddResult.added(let p, let qty):
+
+// ② 型名を省略して . だけ書いた場合（一般的）
+case .added(let p, let qty):
+```
+
+この2つは完全に同じ意味。`.` は「型名は省略したけど、列挙型のケースを参照しています」という目印。
+
+#### パターンマッチングは switch 以外にも使える
+この「パターンマッチング」機能は `switch` 文だけでなく、`if` 文や `guard` 文でも使える。
+
+```swift
+// if case（switch の1ケースだけ使う場合）
+if case .added(let p, let qty) = r {
+    print("追加: \(p.name) × \(qty)")
+}
+
+// guard case（早期リターンと組み合わせる場合）
+guard case .added(let p, let qty) = r else {
+    return
+}
+```
+
+つまり、**「パターンマッチング」は Swift の言語機能として一般的に使えるものであり、`switch` はその代表的な使い方の1つ**。
+
+### switch の基本ルール
 ```swift
 enum Color { case red, blue }
 let c = Color.red
