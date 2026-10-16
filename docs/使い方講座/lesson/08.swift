@@ -62,15 +62,16 @@ func product(_ id: String) -> Product { products.first { $0.id == id }! }
 
 
 //----------------
-//減らしてよいか？
-///在庫不足があれば理由(文字列)を返す。問題なければnil
-func checkStock(_ cart: [CartLine], inventory: [Product]) -? String? {
-    //在庫管理アリの行を順に見る
-    for line in cart where line.product.stockMode != .nome {
-        let id = line.product.id
+//カート内の全ての商品が本当に購入可能か？
+///在庫不足があれば理由[文字列]を返す。問題なければ空[]
+func checkStock(_ cart: [CartLine], inventory: [Product]) -? [String] {
+   var problems: [String] = []
+   var checked: Set<String> = [] //判定済みの商品ID(報告の重複チェック)
+   
 
-        //野良は対象外(nil)
-        guard let current = inventory.first(where: $0.id  == id }),
+   //カートのなかで、管理ありの行だけみる(野良除外)
+   for line in cart where line.product.stockMode != .none {
+    let id = line.product.id
 
-    }
+   }
 }
