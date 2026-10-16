@@ -169,3 +169,29 @@ func normalizeID(_ raw: String) -> String {
 print(normalizeID("kh08"))
 print(normalizeID("KH-020"))
 print(normalizeID("st 1"))
+
+// -----------  6
+//enum の遷移
+enum SaleState {
+    case idle
+    case scanning
+    case choosingPayment
+    case cashInput 
+    case satsWaiting
+    case done
+}
+
+func describe(_ state: SaleState) -> String {
+    switch state{
+        case .idle: return "待機"
+        case .scanning: return "すきゃん中"
+        case .choosingPayment: return "支払い方法選んで"
+        case .cashInput : return "現金受取中"
+        case .satsWaiting: return "satsまち"
+        case .done : return "完了" 
+    }
+}
+
+print(describe(.scanning)) //describeの引数はSaleStateと決まっているので、省略できる。
+
+
