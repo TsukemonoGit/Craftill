@@ -141,9 +141,3 @@ let noStock = Product(id: "FR-001", typeId: "free", name: "在庫管理なし商
 run("9 在庫管理なし", [
     CartLine(product: noStock, qty: 100),
 ], inventory: products + [noStock])
-
-// 10. 同一商品が2行に分かれている
-run("10 同一商品2行", [
-    CartLine(product: product("ST-001"), qty: 6),
-    CartLine(product: product("ST-001"), qty: 6),   // 合計12 > 在庫10
-])
