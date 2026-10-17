@@ -459,29 +459,29 @@ SwiftUI の `ForEach` などで見かける `\.` は「キーパス（Key Path�
 `\.self` は「**その要素そのもの**」を指します。
 
 ### 他言語・フレームワークとの対応
-JS/TS や Svelte をご存知であれば、以下の対応関係が最も理解の助けになります。
+Svelte や React をご存知であれば、以下の対応関係が最も理解の助けになります。
 
 | 言語・フレームワーク | 「要素そのもの」を識別子にする書き方 | 特定のプロパティを識別子にする書き方 |
 | :--- | :--- | :--- |
 | **SwiftUI** | `id: \.self` | `id: \.id` |
 | **Svelte** | `{#each items as item (item)}` | `{#each items as item (item.id)}` |
-| **JS/TS (Array.map等)** | `item => item` | `item => item.id` |
+| **React** | `key={item}` | `key={item.id}` |
 
-#### 1. JS/TS における `item => item`
-JS/TS で `item => item` とは、「受け取った値をそのまま返す関数（恒等関数）」のことです。
-SwiftUI の `ForEach(cart, id: \.self)` は、内部的に「各要素に対して `\.self`（そのもの自身）を ID として評価してね」と指示しています。これは JS/TS で `cart.map(item => item)` と書いて「要素そのものを取得する」のと同じ意味です。
-
-#### 2. Svelte における `(item)`
+#### 1. Svelte における `(item)`
 Svelte の `{#each items as item (item)}` のカッコ内 `(item)` は、「配列の要素そのものをユニークキーとして使う」ことを意味します。
 SwiftUI で `id: \.self` を指定するのは、Svelte で `(item)` と書くのと技術的に完全に同じ役割です。
 
+#### 2. React における `key={item}`
+React で配列をレンダリングする際、`key={item}` と書くと「要素そのものをキーとして使う」ことになります。
+SwiftUI の `id: \.self` は、React の `key={item}` と同じ意味です。
+
 ### なぜこれが必要なのか（識別子 / Key の役割）
-3つのフレームワークでこの指定が必要な理由は同一です。
+これらのフレームワークでこの指定が必要な理由は同一です。
 
 配列の要素が「追加」「削除」「順序変更」されたとき、フレームワークが「**どの要素が変化したか**」を正確に特定し、画面（DOM または View グラフ）を最小限のコストで更新（差分検知）するために使用されます。
 
 *   **Svelte**: `(item.id)` で ID を指定して再描画コストを下げる
+*   **React**: `key={item.id}` で ID を指定して再描画コストを下げる
 *   **SwiftUI**: `id: \.id` で ID を指定して View の更新を最適化する
-*   **JS/TS**: `key` プロパティや `map` のキー生成関数で React などのライブラリに渡す
 
-要素が `String` や `Int` などの基本的な型（`Hashable` プロトコルに準拠）の場合、値そのものがユニークになるため、Svelte の `(item)` や Swift の `\.self` を指定します。
+要素が `String` や `Int` などの基本的な型（`Hashable` プロトコルに準拠）の場合、値そのものがユニークになるため、Svelte の `(item)`、React の `key={item}`、Swift の `\.self` を指定します。
