@@ -15,6 +15,21 @@ if x > 0 { print("正") }   // OK
 ```
 C# は括弧が必須で `{ }` は省略可。Swiftは逆。
 
+### 条件は `,` で並べられる
+```swift
+if x > 0, y > 0 { print("両方正") }
+if x > 0 && y > 0 { print("両方正") }   // 同じ意味
+```
+- `,` で区切られた各要素が条件1つ。すべて真のときだけ `{ }` が実行される
+- 左から順に評価し、偽が出た時点で打ち切る（`&&` と同じ短絡評価）
+- `if` / `guard` / `while` で共通の文法
+- OR は `,` で書けない。`||` を使う
+- `,` と `&&` / `||` は併用できる。1つの要素の中では `&&` / `||` が先に評価される
+```swift
+if a > 0 || b > 0, c > 0 { }   // (a > 0 || b > 0) かつ c > 0
+```
+- `,` が `&&` と違う点は、要素に `let`（オプショナルバインディング）を書けること。§6 を参照
+
 ## 3. 条件は Bool のみ（truthy / falsy がない）
 ```swift
 let n = 1
@@ -55,6 +70,16 @@ let x = s!                  // 強制取り出し。nil だと実行時にクラ
 ```
 - C# の `int?` に近いが、Swiftは参照型（class）も含めて、nil にしたい型にはすべて `?` が必要
 - C# の `!` はコンパイラ警告を消すだけ。Swiftの `!` は nil のときクラッシュする
+
+### `if let` と `,`（§2 の条件リスト）
+```swift
+if let i = idx, i > 0 { print(i) }                  // 取り出して、さらに条件
+if let i = idx, let j = jdx, i < j { print(i, j) }  // 取り出しを複数
+```
+- `let` は条件リストの1要素として書ける。取り出せれば真、nil なら偽
+- 前の要素で取り出した変数を、後の要素で使える（上の例では `i`）
+- 1つでも偽（または nil）なら `{ }` は実行されない
+- `if let` で取り出した変数は `{ }` の中だけで使える。外でも使う場合は `guard let`（§22）
 
 ## 7. struct は値型。配列・文字列も値型
 ```swift
@@ -485,3 +510,51 @@ SwiftUI の `id: \.self` は、React の `key={item}` と同じ意味です。
 *   **SwiftUI**: `id: \.id` で ID を指定して View の更新を最適化する
 
 要素が `String` や `Int` などの基本的な型（`Hashable` プロトコルに準拠）の場合、値そのものがユニークになるため、Svelte の `(item)`、React の `key={item}`、Swift の `\.self` を指定します。
+
+
+## 22. `guard`（早期脱出）
+
+### 基本
+```swift
+guard 条件 else {
+    // 条件が false のときだけ実行される
+    return   // 必ずスコープを抜ける
+}
+// 条件が true のときだけここに来る
+```
+- `if` は「条件が真のとき `{ }` を実行」。`guard` は「条件が偽のとき `{ }` を実行して抜ける」
+- 条件の書き方は `if` と同じ（§2 の `,` 条件リスト、§6 の `let` がそのまま使える）
+- `else` の `{ }` は必ずスコープを抜ける。抜けないとコンパイルエラー
+- 使える文：`return` / `throw` / `fatalError()` など。`continue` / `break` はループ内のみ
+- JS / C# の `if (!cond) return;` による早期リターンに相当
+
+### `if let` との違い：変数の有効範囲
+```swift
+// if let: { } の中だけ
+if let v = s {
+    print(v)       // OK
+}
+// print(v)        // エラー
+
+// guard let: guard 以降のスコープ全体
+guard let v = s else { return }
+print(v)           // OK
+```
+- `if let` はネストが深くなりやすい
+- `guard let` は取り出した変数を後続の処理全体で使えるため、ネストが浅くなる
+
+### 例：複数条件
+```swift
+for id in targets {
+    guard id > 0,
+          let i = inventory.firstIndex(where: { $0.id == id }),
+          let current = inventory[i].stock else {
+        continue
+    }
+    print("\(id): 在庫 \(current)")
+}
+```
+- `guard` から `else` の前までが条件。3要素を `,` で並べている
+- 1つでも偽（または nil）なら `else { continue }` が実行され、次のループへ進む
+- すべて真なら `i` と `current` が `guard` 以降で使える
+- 括弧がない代わりに、1要素1行で改行すると区切りが見やすい

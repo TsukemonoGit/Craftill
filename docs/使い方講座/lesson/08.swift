@@ -141,3 +141,4 @@ let noStock = Product(id: "FR-001", typeId: "free", name: "在庫管理なし商
 run("9 在庫管理なし", [
     CartLine(product: noStock, qty: 100),
 ], inventory: products + [noStock])
+
