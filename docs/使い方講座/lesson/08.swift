@@ -152,7 +152,7 @@ enum CompleteResult{
     case failure([String])
 }
 
-func completeSale(saleId: String, cart: [CartLine], inventory: inout [Product], movement: [StockMovement]) -> CompleteResult {
+func completeSale(saleId: String, cart: [CartLine], inventory: inout [Product], movements: inout [StockMovement]) -> CompleteResult {
 
     //在庫検証
     let problems = checkStock(cart, inventory:inventory)
@@ -167,16 +167,59 @@ func completeSale(saleId: String, cart: [CartLine], inventory: inout [Product], 
         let p = line.product
 
         guard p.stockMode != .none, 
-            let i = inventory.firstIndex(where: { $0.id ==p.id}),
+            let i = inventory.firstIndex(where: { $0.id == p.id}),
             let current = inventory[i].stock else {continue}
 
             let after = current - line.qty
 
             inventory[i].stock = after
             memo.append("\(p.name): 在庫 \(current) → \(after)")
-            movements.append(StockMovement(productId: p.id,delta: -line.qty, reason: "sale",saleId;saleId))
+            movements.append(StockMovement(productId: p.id, delta: -line.qty, reason: "sale", saleId: saleId))
 
     } 
     return .success(lines: memo)
 }
 
+
+//-----------------------
+//試す
+//a
+var inventory = products
+var movements: [StockMovement] = []
+
+let cart = [
+    CartLine(product: product("ST-001"), qty:2)
+    ,CartLine(product: product("KH-001"), qty:1
+    )
+]
+
+switch completeSale(saleId: "S-001", cart : cart, inventory: &inventory, movements: &movements){
+    case .success(let lines):
+        print("完了")
+        lines.forEach{print(" \($0)")}
+    case .failure(let reasons):
+        reasons.forEach {print("失敗: \($0)")}
+}
+print("------a")
+print("変動ログ:" , movements.map{"\($0.productId) \($0.delta)"})
+
+//b 
+var inventoryB = products + [noStock]
+var movementsB: [StockMovement] = []
+
+let cartB = [
+    CartLine(product: product("ST-003"), qty:1),
+    CartLine(product: noStock, qty:100),
+    CartLine(product: ghost, qty:5)
+]
+
+switch completeSale(saleId: "S-004",cart: cartB, inventory: &inventoryB, movements: &movementsB){
+    case .success(let lines):
+        print("完了")
+        lines.forEach {print(" \($0)")}
+    case .failure(let reasons):
+        reasons.forEach {print("失敗: \($0)")}
+}
+print("------b")
+print("変動ログ: ",movementsB.map{"\($0.productId) \($0.delta)"})
+print("FR-001 の在庫: ", inventoryB.first{$0.id == "FR-001"}!.stock as Any)
