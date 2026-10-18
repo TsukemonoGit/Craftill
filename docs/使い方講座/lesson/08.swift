@@ -62,6 +62,7 @@ func product(_ id: String) -> Product { products.first { $0.id == id }! }
 
 
 //----------------
+//1
 //カート内の全ての商品が本当に購入可能か？
 ///在庫不足があれば理由[文字列]を返す。問題なければ空[]
 func checkStock(_ cart: [CartLine], inventory: [Product]) -> [String]{
@@ -141,4 +142,41 @@ let noStock = Product(id: "FR-001", typeId: "free", name: "在庫管理なし商
 run("9 在庫管理なし", [
     CartLine(product: noStock, qty: 100),
 ], inventory: products + [noStock])
+
+//----------------
+//2
+//検証がすべて通ったときだけ、まとめて反映する。
+//inout で在庫表と、ログをかきかえる
+enum CompleteResult{
+    case success(lines: [String])
+    case failure([String])
+}
+
+func completeSale(saleId: String, cart: [CartLine], inventory: inout [Product], movement: [StockMovement]) -> CompleteResult {
+
+    //在庫検証
+    let problems = checkStock(cart, inventory:inventory)
+    if !problems.isEmpty{
+        return .failure(problems)
+
+    }   
+
+    //
+    var memo: [String] = []
+    for line in cart {
+        let p = line.product
+
+        guard p.stockMode != .none, 
+            let i = inventory.firstIndex(where: { $0.id ==p.id}),
+            let current = inventory[i].stock else {continue}
+
+            let after = current - line.qty
+
+            inventory[i].stock = after
+            memo.append("\(p.name): 在庫 \(current) → \(after)")
+            movements.append(StockMovement(productId: p.id,delta: -line.qty, reason: "sale",saleId;saleId))
+
+    } 
+    return .success(lines: memo)
+}
 
