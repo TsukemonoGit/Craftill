@@ -302,6 +302,29 @@ struct IdSequencer {
         return "ADHOC-" + pad(adhocSeq, 2)
     }
 
+    /// 商品ID の採番（A-18、A-19-4）。**CSV 取り込み時だけ**使う。
+    /// - 接頭辞と桁数は **種類定義**に従う（`idPrefix` / `idDigits`）
+    /// - **その種類の既存の最大番号の次**から連番（A-18）
+    /// - **欠番は再利用しない**。「今の最大 + 1」なので、抜けた番号はそのまま残る（A-18）
+    /// - **桁数を超える場合は `nil`**（採番しない・A-18）
+    mutating func nextProductID(type: ProductType, existing: [Product]) -> String? {
+        let maxNum = Self.maxProductNumber(prefix: type.idPrefix, in: existing)
+        let nextNum = maxNum + 1
+        guard String(nextNum).count <= type.idDigits else { return nil }
+        return "\(type.idPrefix)-\(pad(nextNum, type.idDigits))"
+    }
+
+    /// その接頭辞の**既存の最大番号**。該当なしなら 0（A-18）
+    static func maxProductNumber(prefix: String, in products: [Product]) -> Int {
+        var maxNum = 0
+        for p in products where p.id.hasPrefix(prefix + "-") {
+            let parts = p.id.split(separator: "-", omittingEmptySubsequences: true)
+            guard parts.count == 2, let n = Int(parts[1]) else { continue }
+            maxNum = max(maxNum, n)
+        }
+        return maxNum
+    }
+
     /// 取り消しても番号は戻らない。再利用しない（A-19-4）
     private func pad(_ n: Int, _ width: Int) -> String {
         let s = String(n)
