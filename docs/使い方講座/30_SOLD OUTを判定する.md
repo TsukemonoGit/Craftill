@@ -1,227 +1,187 @@
-# 30. SOLD OUTを判定する
+# 追加レッスン: SOLD OUT を判定する
 
-元: `../siyou.md` A-1（SOLD OUT）、A-2（商品パネル）
+元: `../siyou.md` A-1、B-1、受け入れテスト C-6 #33
+`02_練習メニュー.md` の「30. SOLD OUT を判定する」。
 
-**ゴール**: 在庫管理ありの種類で在庫が0なら「SOLD OUT」にして、カートに追加しない。
-在庫管理なし型（`none`）は SOLD OUT にならない。商品パネルの表示（通常／SOLD OUT／追加済み）を `enum` で表す。
+**SOLD OUT のルール**はこうです。
 
-> 純ロジックの練習。**ブック（Book）**で作る。
+> 在庫管理ありの種類で **在庫0** の商品は、SOLD OUT。
+> **在庫管理なし型は SOLD OUT にならない**（A-1、B-1）。
+
+判定のコードは書きません。**`base/5_カート編集.md` の `isSoldOut` が持ちます**。
+このレッスンは **「押せるか」と「追加できるか」をどう分けるか** を確かめます。
 
 ---
 
-## 前提データ（このまま貼れば動く）
+## まず土台をペーストする
 
-```swift
-import Foundation
+1. `base/Types.swift` の**型だけ**
+2. `base/5_カート編集.md` の §1
 
-// ── 在庫の扱い（種類ごと）────────────────
-enum StockMode {
-    case counted   // 数量管理型（ステッカー。在庫を数で持つ）
-    case unique    // 一点物型（キーホルダー。在庫は1か0）
-    case none      // 在庫管理なし型（今回は商品なし）
+---
+
+## `isSoldOut` の3行
+
+```swift 断片
+func isSoldOut(_ p: Product, in inventory: [Product], types: [ProductType]) -> Bool {
+    guard let i = inventory.firstIndex(where: { $0.id == p.id }) else { return false }
+    guard inventory[i].managesStock(in: types) else { return false }   // 在庫管理なし型は false
+    return (inventory[i].stock ?? 0) == 0
 }
-
-// ── 種類の定義（product_types 相当）──────
-struct ProductType {
-    let typeId: String       // 例: "sticker"
-    let name: String         // 例: "ステッカー"
-    let idPrefix: String     // 例: "ST"
-    let idDigits: Int        // 例: 3
-    let stockMode: StockMode
-    let attrLabel1: String?  // 例: "色"
-    let attrLabel2: String?  // 例: "模様"
-    let attrLabel3: String?  // 例: nil
-}
-
-// ── 商品（products 相当）────────────────
-struct Product {
-    let id: String
-    let typeId: String
-    let name: String
-    let priceJpy: Int
-    let priceSats: Int?      // nil なら sats払いでも現金で受け取る
-    var stock: Int?          // none は nil
-    let attr1: String?
-    let attr2: String?
-    let attr3: String?
-    let isPublic: Bool
-}
-
-// ── 種類定義（`../開発/6_データベース.md` より）
-let productTypes: [ProductType] = [
-    ProductType(typeId: "sticker", name: "ステッカー", idPrefix: "ST", idDigits: 3,
-                stockMode: .counted, attrLabel1: "色", attrLabel2: "模様", attrLabel3: nil),
-    ProductType(typeId: "keyholder", name: "キーホルダー", idPrefix: "KH", idDigits: 3,
-                stockMode: .unique, attrLabel1: "色", attrLabel2: "模様", attrLabel3: nil),
-    // 説明用: 在庫管理なし型（今回の商品構成では使わない）
-    ProductType(typeId: "made", name: "受注品", idPrefix: "MO", idDigits: 3,
-                stockMode: .none, attrLabel1: nil, attrLabel2: nil, attrLabel3: nil),
-]
-
-// ── 商品のサンプル（`../開発/6_データベース.md` より）
-let products: [Product] = [
-    Product(id: "ST-001", typeId: "sticker", name: "ステッカー まる",    priceJpy: 300, priceSats: 500,  stock: 10, attr1: "黄", attr2: "まる",   attr3: nil, isPublic: true),
-    Product(id: "ST-002", typeId: "sticker", name: "ステッカー さんかく", priceJpy: 300, priceSats: 500,  stock: 10, attr1: "赤", attr2: "さんかく", attr3: nil, isPublic: true),
-    Product(id: "ST-003", typeId: "sticker", name: "ステッカー しかく",   priceJpy: 300, priceSats: nil,  stock: 10, attr1: "青", attr2: "しかく",  attr3: nil, isPublic: true),
-    Product(id: "KH-001", typeId: "keyholder", name: "キーホルダー 01",   priceJpy: 800, priceSats: 1200, stock: 1,  attr1: "赤", attr2: "○",       attr3: nil, isPublic: true),
-    Product(id: "KH-002", typeId: "keyholder", name: "キーホルダー 02",   priceJpy: 800, priceSats: 1200, stock: 1,  attr1: "青", attr2: "△",       attr3: nil, isPublic: true),
-    Product(id: "KH-008", typeId: "keyholder", name: "キーホルダー 08",   priceJpy: 800, priceSats: 1200, stock: 1,  attr1: "緑", attr2: "☆",       attr3: nil, isPublic: true),
-    Product(id: "KH-020", typeId: "keyholder", name: "キーホルダー 20",   priceJpy: 800, priceSats: 1200, stock: 1,  attr1: "紫", attr2: "☆",       attr3: nil, isPublic: true),
-    Product(id: "MO-001", typeId: "made",    name: "受注品 A",           priceJpy: 500, priceSats: nil,  stock: nil, attr1: nil, attr2: nil,       attr3: nil, isPublic: false),
-]
-
-// ── カート（メモリ上の1行）──────────────
-// ── カートの行（形は 03_レッスン.md レッスン2 で決めたものと同じ）──
-struct CartLine {
-    let id: String          // 登録商品は商品ID、野良は "ADHOC-1" など
-    let typeId: String?     // 登録商品は種類ID、野良は nil
-    let name: String        // カートに入れた時点の商品名
-    let unitPriceJpy: Int   // カートに入れた時点の円単価
-    let unitPriceSats: Int? // カートに入れた時点のsats単価
-    var qty: Int
-    let isAdhoc: Bool       // 野良かどうか
-}
-
-/// 登録商品からカートの行を作る
-func line(_ p: Product, qty: Int) -> CartLine {
-    CartLine(id: p.id, typeId: p.typeId, name: p.name,
-             unitPriceJpy: p.priceJpy, unitPriceSats: p.priceSats,
-             qty: qty, isAdhoc: false)
-}
-var cart: [CartLine] = []
 ```
 
+読み順是关键です。
+
+| 行 | 意味 |
+| --- | --- |
+| `guard let i = ...` | 在庫表に居なければ `false`（SOLD OUT とは无关） |
+| `guard managesStock(in:)` | **在庫管理なし型を先に除外する**（B-1） |
+| `stock ?? 0) == 0` | 在庫0か |
+
+**2行目が無いと**、在庫管理なし型（`stock` が `nil`）が
+`nil ?? 0 == 0` で **SOLD OUT 扱い**になります。
+B-1 は「在庫管理なし型：在庫を表示しない（SOLD OUT にならない）」と明記しているので、
+これはそのまま **C-6 #33 の違反** です。
+
 ---
 
-## 30-1. 表示を3つに分ける `enum`
+## わざと間違う: `isSoldOut` と `addCheck` を別々に書く
 
-商品パネルの1マスは、次の3つのどれかになる。
+「表示は `isSoldOut`」「追加は `addCheck`」と分けて書くと、
+**両方が似ていて、片方だけ直される**事故が起きます。
 
-| 表示 | いつ |
-| --- | --- |
-| 通常（追加） | 追加できる |
-| SOLD OUT | 在庫管理ありで在庫0 |
-| 追加済み | 一点物型がすでにカートにある |
+```swift NG
+// わざと間違う版：パネル側だけ別の判定を使う
+func isSoldOutPanel(_ p: Product, inventory: [Product]) -> Bool {
+    return (p.stock ?? 0) == 0        // ★ 在庫管理なし型も SOLD OUT になる
+}
+```
 
-```swift
+**何が壊れるか**
+
+| 商品 | `isSoldOut`（正しい） | `isSoldOutPanel`（間違い） |
+| --- | --- | --- |
+| ST-001 ステッカー（在庫3） | `false` | `false` |
+| ST-002 ステッカー（**在庫0**） | `true` | `true` |
+| TB-001 入場券（**在庫管理なし**） | `false` | **`true`** ← B-1 に反する |
+
+**同じ「在庫0か」を2か所で判定している**のが原因です。
+`stock` を読むのは `addCheck` と `isSoldOut` の **2か所だけ**にしましょう。
+
+> **`isSoldOut` は `addCheck` の `soldOut` の別名ではありません**。
+> `addCheck` は「追加できるか」（3 penalized理由）、`isSoldOut` は「表示だけ」（真偽値）。
+> 役割が違うので2つの関数に分けています。
+
+---
+
+## わざと間違う: NET表示だけ見て、追加を許す
+
+逆に、**パネルは「追加済み」なのに、SOLD OUT の商品には「追加済み ALSOidasetasaily 显示」**ことがあります。
+
+一点物型は「すでに入っているなら `duplicateUnique`」ですが、
+その商品の在庫が0（A-7 で調整した結果）なら `.soldOut` のほうが先に来ます。
+`addCheck` の並び順は、`soldOut` → `duplicateUnique` → `overStock` です。
+
+**どちらの文言を出すかは `addCheckMessage` の1か所**で決まります。
+UI 側で「在庫0で既に入っている」のような文言を書かないでください。
+
+---
+
+## 商品パネルの表示は3種類
+
+A-1 と B-1 に書いている表示は **3 種類** です。
+`PanelState` は enum で持ちます。
+
+```swift 断片
 enum PanelState {
-    case normal    // 通常（追加できる）
-    case soldOut   // SOLD OUT（在庫管理ありで在庫0）
-    case added     // 追加済み（一点物型でカートにある）
+    case normal                                  // 普通に追加できる
+    case soldOut                                 // 在庫0
+    case alreadyInCart                           // すでに入っている（一点物型）
+    case overStock(current: Int, need: Int)      // 在庫を超える
 
-    var label: String {
+    /// ボタンを押せるか（SOLD OUT と追加済みは押せない）
+    var isEnabled: Bool {
+        self == .normal
+    }
+
+    /// ボタンの下に書く1行
+    var caption: String {
         switch self {
-        case .normal:  return "追加"
-        case .soldOut: return "SOLD OUT"
-        case .added:   return "追加済み"
+        case .normal:        return "タップで追加"
+        case .soldOut:       return "SOLD OUT"
+        case .alreadyInCart: return "カートに追加済み"
+        case .overStock(let c, let n): return "在庫 \(c)／追加すると \(n) 個"
         }
     }
-
-    // タップして追加してよいか
-    var canAdd: Bool { self == .normal }
 }
 ```
 
-- `var label: String { ... }` は**計算プロパティ**（`01_初心者メモ.md` 参照）
-- `self == .normal` は「自分が `.normal` のときだけ true」
+**`addCheck` の `AddCheck` と `PanelState` は 1 対 1** です。
 
----
+| `AddCheck` | `PanelState` | 意味 |
+| --- | --- | --- |
+| `.ok` | `.normal` | 追加できる |
+| `.soldOut` | `.soldOut` | 在庫0（A-1） |
+| `.duplicateUnique` | `.alreadyInCart` | 一点物型ですでに入っている（C-6 #6） |
+| `.overStock(c, n)` | `.overStock(c, n)` | 在庫不足（C-6 #7） |
 
-## 30-2. 状態を判定する関数
+変換は **1か所の関数**にしてください（`30-4`）。
 
-判定の順番が大事。**在庫0かどうかを先に**見る。
-
-```swift
-// 種類を引く
-func productType(_ product: Product) -> ProductType? {
-    productTypes.first { $0.typeId == product.typeId }
-}
-
-// カートに入っている数量（無ければ0）
-func cartQty(_ id: String) -> Int {
-    cart.first { $0.id == id }?.qty ?? 0
-}
-
-/// 商品パネルの表示を決める。
-func panelState(for product: Product) -> PanelState {
-    guard let pt = productType(product) else { return .normal }
-
-    // 在庫管理なし型は常に販売可。SOLD OUT にしない
-    if pt.stockMode == .none {
-        return .normal
+```swift 断片
+func panelState(for p: Product, qty: Int, cart: [CartLine],
+                inventory: [Product], types: [ProductType]) -> PanelState {
+    switch addCheck(product: p, qty: qty, cart: cart, inventory: inventory, types: types) {
+    case .ok:                return .normal
+    case .soldOut:           return .soldOut
+    case .duplicateUnique:   return .alreadyInCart
+    case .overStock(let c, let n): return .overStock(current: c, need: n)
     }
-    // 在庫管理ありの種類で在庫0 → SOLD OUT
-    if (product.stock ?? 0) <= 0 {
-        return .soldOut
-    }
-    // 一点物型がすでにカートにある → 追加済み
-    if pt.stockMode == .unique && cartQty(product.id) >= 1 {
-        return .added
-    }
-    return .normal
-}
-```
-
-- `pt.stockMode == .none` の判定を**最初に**かけるのがポイント。ここで抜けると、在庫0でも SOLD OUT にならない
-- `product.stock ?? 0` … `stock` が `nil`（在庫管理なし）なら 0 とみなす
-
----
-
-## 30-3. 追加処理とつなぐ
-
-パネルをタップしたときの動き。**`canAdd` のときだけ**カートに入れる。
-
-```swift
-/// パネルをタップしたときの追加。追加できたら true。
-func tapPanel(_ product: Product) -> Bool {
-    let state = panelState(for: product)
-    guard state.canAdd else {
-        print("\(product.id): \(state.label) なので追加しない")
-        return false
-    }
-    if let i = cart.firstIndex(where: { $0.id == product.id }) {
-        cart[i].qty += 1
-    } else {
-        cart.append(line(product, qty: 1))
-    }
-    print("\(product.id): カートに追加した")
-    return true
 }
 ```
 
 ---
 
-## 30-4. 動かしてみる
+## 確かめる
 
-```swift
-// ① 在庫あり → 通常
-print("ST-001:", panelState(for: products[0]).label)   // 追加
+`07_カートの種類ごとの追加ルール.md` の「通しの確認」をそのまま動かしてください。
+【4】がこれです。
 
-// ② 在庫0 → SOLD OUT（完了して0になった想定）
-var sold = products[2]          // ST-003 をコピー
-sold.stock = 0
-print("ST-003:", panelState(for: sold).label)          // SOLD OUT
-
-// ③ 一点物をカートに入れる → 追加済み
-_ = tapPanel(products[3])       // KH-001 を追加
-print("KH-001:", panelState(for: products[3]).label)   // 追加済み
-
-// ④ 在庫管理なし型は在庫を0にしても SOLD OUT にならない
-var noneP = products[7]         // MO-001 をコピー
-noneP.stock = 0
-print("MO-001:", panelState(for: noneP).label)         // 追加（SOLD OUTにならない）
+```
+【4】在庫0は SOLD OUT（追加経路によらず不可・A-1 / C-6 #33）
+  ST-002: rejected(SOLD OUT: ステッカー さんかく)
+  isSoldOut(ST-002): true
+  isSoldOut(ST-001): false
+  isSoldOut(入場券): false　← 在庫管理なし型は SOLD OUT にならない（A-1）
 ```
 
-**できた合図**:
-- `ST-001: 追加`
-- `ST-003: SOLD OUT`
-- `KH-001: 追加済み`
-- `MO-001: 追加`
+**入場券が `false`** になっているのが要点です。
+`isSoldOut` の **2行目**（`managesStock`）が効いています。
+
+---
+
+## 考えてみる（答えはない）
+
+1. B-1 は、Web 側にも「残り N 個」「1点もの」「SOLD OUT」の3種類の表示を書いています。
+   **同じ `isSoldOut` が快照（A-14 の `SnapshotProduct.stock`）から判定できる**でしょうか。
+   `SnapshotProduct` には `ProductType.stockMode` がないはずです（送信するのは公開対象の種類だけ）。
+   不足している情報をスナップショットに足すか、**表示側で種類と突き合わせる**か、どちらが正しいでしょうか。
+2. C-6 #33 は「在庫0は SOLD OUT 表示、**カートにある一点物はエラー**」です。
+   `isSoldOut` は「追加できるか」を見ず「在庫が0か」だけを見ます。
+   **カートにすでに入っている一点物型の商品を、パネルはどう表示しますか**。
+   `panelState` なら答えが出ますが、`isSoldOut` だけなら出せません。どちらを使いますか。
+3. 営業中に別の端末が在庫を動かしたら、パネルの SOLD OUT 表示は
+   **いつ**書き換わりますか。商品パネルを開いた瞬間だけだと、他で動かした在庫に追いつきません。
+   A-14 のスナップショット送信（Cloudflare KV、`60秒以上`の遅延）と、
+   B の「最終更新時刻」の表示とどう整合させますか。
 
 ---
 
 ## ポイント
-- **在庫管理ありの種類**（`counted`・`unique`）だけが SOLD OUT になる
-- 在庫管理なし型（`none`）は在庫0でも常に販売可（SOLD OUT にしない）
-- 一点物型がカートにある間は「追加済み」。タップしても追加しない（エラー表示の元）
-- 表示の判断は `enum PanelState` にまとめておくと、画面側は `.label` と `.canAdd` を見るだけで済む
+
+- SOLD OUT は **在庫管理ありの種類で在庫0**。**在庫管理なし型はならない**（A-1、B-1）
+- `isSoldOut` の **2行目**（`managesStock`）を落とすと、在庫管理なし型が SOLD OUT になる
+- 在庫を読むのは **`addCheck` と `isSoldOut` の2か所だけ**
+- **「押せるか」は `panelState(...).isEnabled`**。UI 側で在庫を読まない
+- `AddCheck` と `PanelState` は **1 対 1**。変換は1か所の関数
+- 1文の文言は **`addCheckMessage` / `PanelState.caption`**。UI 側で書かない
+- 販売取消と**記録に残らない中断**は別の状態。混同しない（A-1、A-19-3）

@@ -30,22 +30,58 @@ from typing import Optional
 
 BASE = Path(__file__).resolve().parent
 
+# 自動検証の対象外（理由は NO_VERIFY）
+#   03_レッスン.md … レッスン1〜8 が1つのファイルに混在し、
+#                    Swift基本／SwiftUI／永続化で文法が違うため1本に連結できない
+NO_VERIFY = {"03_レッスン.md"}
+
 # レッスンを検証するとき、先に置く base の正となるコード
+#   (ファイル名, 使うブロック) のリスト
+#     [0, 1]         … 0番目と1番目
+#     "all_but_last" … 最後の1つ（通しの確認）を除く
 PRELUDE = {
-    "09_カートを編集する": ["2_型定義.md", "5_カート編集.md"],
-    "56_会計の状態を切り替える": ["2_型定義.md", "3_標準ロジック.md", "6_会計の状態機械.md"],
+    "07_カートの種類ごとの追加ルール": [
+        ("2_型定義.md", [0, 1]),
+        ("5_カート編集.md", "all_but_last"),
+    ],
+    "09_カートを編集する": [
+        ("2_型定義.md", [0, 1]),
+        ("5_カート編集.md", "all_but_last"),
+    ],
+    "28_一点物型の重複を防ぐ": [
+        ("2_型定義.md", [0, 1]),
+        ("5_カート編集.md", "all_but_last"),
+    ],
+    "29_在庫超過を防ぐ": [
+        ("2_型定義.md", [0, 1]),
+        ("5_カート編集.md", "all_but_last"),
+    ],
+    "30_SOLD OUTを判定する": [
+        ("2_型定義.md", [0, 1]),
+        ("5_カート編集.md", "all_but_last"),
+    ],
+    "56_会計の状態を切り替える": [
+        ("2_型定義.md", [0, 1]),
+        ("3_標準ロジック.md", "all_but_last"),
+        ("6_会計の状態機械.md", "all_but_last"),
+    ],
+    "19_会計状態をまるごと保存する": [
+        ("2_型定義.md", [0, 1]),
+        ("3_標準ロジック.md", [0, 2]),          # §1 合計 と §3 在庫検証
+        ("6_会計の状態機械.md", "all_but_last"),
+    ],
 }
 
 
-def prelude_blocks(lesson: Path) -> str:
-    """指定されたレッスンの土台になる base のコード"""
-    names = PRELUDE.get(lesson.stem)
-    if not names:
+def prelude_src(lesson_stem: str) -> str:
+    """レッスンの土台になる base のコードを連結して返す"""
+    spec = PRELUDE.get(lesson_stem)
+    if not spec:
         return ""
     parts = []
-    for name in names:
+    for name, which in spec:
         blocks = swift_blocks(BASE / name)
-        use = blocks[:2] if name == "2_型定義.md" else blocks[:-1]
+        use = blocks[:-1] if which == "all_but_last" else [blocks[i] for i in which]
         parts.append("\n\n".join(use))
     return "\n\n".join(parts) + "\n\n"
 RED = "\033[31m"
@@ -139,14 +175,14 @@ def main() -> int:
     if what in ("all", "types", "logic"):
         if what != "logic":
             fail += check("Types.swift", "\n".join(t_blocks[:3]),
-                          expected_after(t_md, "## 4. 動作確認"))
+                          expected_after(t_md, "動作確認"))
 
     if what in ("all", "logic"):
         l_md = BASE / "3_標準ロジック.md"
         l_blocks = swift_blocks(l_md)
         src = t_blocks[0] + "\n" + t_blocks[1] + "\n\n" + "\n\n".join(l_blocks)
         fail += check("3_標準ロジック.md（通し）", src,
-                      expected_after(l_md, "## 9. 通しの確認"))
+                      expected_after(l_md, "通しの確認"))
 
     if what in ("all", "flow"):
         f_md = BASE / "6_会計の状態機械.md"
@@ -155,21 +191,34 @@ def main() -> int:
         src = t_blocks[0] + "\n" + t_blocks[1] + "\n\n" + "\n\n".join(l_blocks[:-1]) \
               + "\n\n" + "\n\n".join(f_blocks)
         fail += check("6_会計の状態機械.md（通し）", src,
-                      expected_after(f_md, "## 7. 通しの確認"))
+                      expected_after(f_md, "通しの確認"))
+
+    if what in ("all", "save"):
+        sv_md = BASE.parent / "19_会計状態をまるごと保存する.md"
+        src = prelude_src(sv_md.stem) + "\n".join(swift_blocks(sv_md))
+        fail += check(sv_md.name, src, expected_after(sv_md, "通しの確認"))
 
     if what in ("all", "cart"):
         c_md = BASE / "5_カート編集.md"
         c_blocks = swift_blocks(c_md)
         src = t_blocks[0] + "\n" + t_blocks[1] + "\n\n" + "\n\n".join(c_blocks)
         fail += check("5_カート編集.md（通し）", src,
-                      expected_after(c_md, "## 6. 通しの確認"))
+                      expected_after(c_md, "通しの確認"))
 
-    if what not in ("all", "types", "logic", "cart", "flow"):
+    if what not in ("all", "types", "logic", "cart", "flow", "save"):
         p = BASE.parent / (what if what.endswith(".md") else what + ".md")
         if not p.exists():
             print(f"{RED}NG{OFF} {p.name} が見つからない")
             return 1
-        src = prelude_blocks(p) + "\n".join(swift_blocks(p))
+        if p.name in NO_VERIFY:
+            print(f"{YELLOW}--{OFF} {p.name}: 自動検証対象外（NO_VERIFY）")
+            return 0
+        blocks = swift_blocks(p)
+        if not blocks:
+            print(f"{YELLOW}--{OFF} {p.name}: ```swift ブロックなし"
+                  "（base/ の正を参照するレッスン）")
+            return 0
+        src = prelude_src(p.stem) + "\n".join(blocks)
         fail += check(p.name, src, expected_after(p, "#"))
 
     return 1 if fail else 0
