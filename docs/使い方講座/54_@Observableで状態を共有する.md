@@ -37,13 +37,14 @@ struct Product: Identifiable {
 }
 
 // ── カートの1行（登録商品と野良を同じ形で持つ）──
-struct CartLine: Identifiable {
-    let id: String
-    let name: String
-    let priceJpy: Int
-    let priceSats: Int?
+struct CartLine {
+    let id: String          // 登録商品は商品ID、野良は "ADHOC-1" など
+    let typeId: String?     // 登録商品は種類ID、野良は nil
+    let name: String        // カートに入れた時点の商品名
+    let unitPriceJpy: Int   // カートに入れた時点の円単価
+    let unitPriceSats: Int? // カートに入れた時点のsats単価
     var qty: Int
-    let isAdhoc: Bool        // 野良かどうか
+    let isAdhoc: Bool       // 野良かどうか
 }
 
 // ── 会計の状態（A-4）──
@@ -81,7 +82,7 @@ final class CartStore {
     var saleState: SaleState = .idle
 
     // 派生値（持たずに毎回計算する）
-    var totalJpy: Int { lines.reduce(0) { $0 + $1.priceJpy * $1.qty } }
+    var totalJpy: Int { lines.reduce(0) { $0 + $1.unitPriceJpy * $1.qty } }
 
     /// 登録商品をカートに追加する（A-1 の種類ごとのルール）。
     @discardableResult
@@ -101,8 +102,8 @@ final class CartStore {
             }
             lines[i].qty = next                      // 数量管理型・在庫管理なし型は +1
         } else {
-            lines.append(CartLine(id: p.id, name: p.name, priceJpy: p.priceJpy,
-                                  priceSats: p.priceSats, qty: 1, isAdhoc: false))
+            lines.append(CartLine(id: p.id, typeId: p.typeId, name: p.name, unitPriceJpy: p.priceJpy,
+                                  unitPriceSats: p.priceSats, qty: 1, isAdhoc: false))
         }
         if saleState == .idle { saleState = .scanning }   // 初回追加でスキャン中へ（A-4）
         return "追加: \(p.name)"
@@ -183,7 +184,7 @@ struct RegisterView: View {
                         Button("－") { cart.changeQty(line.id, by: -1) }
                         Text("×\(line.qty)")
                         Button("＋") { cart.changeQty(line.id, by: 1) }
-                        Text("¥\(line.priceJpy * line.qty)").frame(width: 80, alignment: .trailing)
+                        Text("¥\(line.unitPriceJpy * line.qty)").frame(width: 80, alignment: .trailing)
                         Button("削除") { cart.remove(line.id) }
                     }
                 }

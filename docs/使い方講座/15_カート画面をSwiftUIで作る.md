@@ -49,10 +49,11 @@ struct Product {
 
 // ── カートの1行（登録商品と野良を同じ形で持つ）──
 struct CartLine: Identifiable {
-    let id: String          // 登録商品は商品ID、野良は "ADHOC-1"
-    let name: String        // 野良は入力名、未入力なら「野良」
-    let priceJpy: Int
-    let priceSats: Int?     // nil なら sats単価なし
+    let id: String          // 登録商品は商品ID、野良は "ADHOC-1" など
+    let typeId: String?     // 登録商品は種類ID、野良は nil
+    let name: String        // カートに入れた時点の商品名
+    let unitPriceJpy: Int   // カートに入れた時点の円単価
+    let unitPriceSats: Int? // カートに入れた時点のsats単価
     var qty: Int
     let isAdhoc: Bool       // 野良かどうか
     let imageName: String?  // 登録商品は商品ID（=画像名）。野良は nil
@@ -69,10 +70,10 @@ let products: [Product] = [
 
 // ── カートの初期値（登録商品＋野良）──
 let initialCart: [CartLine] = [
-    CartLine(id: "KH-001", name: "キーホルダー 01", priceJpy: 800,  priceSats: 1200, qty: 1, isAdhoc: false, imageName: "KH-001"),
-    CartLine(id: "ST-001", name: "ステッカー まる", priceJpy: 300,  priceSats: 500,  qty: 2, isAdhoc: false, imageName: "ST-001"),
-    CartLine(id: "ST-003", name: "ステッカー しかく", priceJpy: 300, priceSats: nil, qty: 1, isAdhoc: false, imageName: "ST-003"),
-    CartLine(id: "ADHOC-1", name: "委託品A",         priceJpy: 1200, priceSats: nil, qty: 1, isAdhoc: true,  imageName: nil),
+    CartLine(id: "KH-001", typeId: "keyholder", name: "キーホルダー 01", unitPriceJpy: 800, unitPriceSats: 1200, qty: 1, isAdhoc: false, imageName: "KH-001"),
+    CartLine(id: "ST-001", typeId: "sticker", name: "ステッカー まる", unitPriceJpy: 300, unitPriceSats: 500, qty: 2, isAdhoc: false, imageName: "ST-001"),
+    CartLine(id: "ST-003", typeId: "sticker", name: "ステッカー しかく", unitPriceJpy: 300, unitPriceSats: nil, qty: 1, isAdhoc: false, imageName: "ST-003"),
+    CartLine(id: "ADHOC-1", typeId: nil, name: "委託品A", unitPriceJpy: 1200, unitPriceSats: nil, qty: 1, isAdhoc: true, imageName: nil),
 ]
 
 /// 名前の画像がアプリに入っているか。
@@ -101,12 +102,12 @@ struct Totals {
 func totals(_ cart: [CartLine]) -> Totals {
     var t = Totals()
     for line in cart {
-        if let s = line.priceSats {
+        if let s = line.unitPriceSats {
             t.sats += s * line.qty                       // sats単価がある行
         } else {
-            t.cashForSats += line.priceJpy * line.qty    // 現金で受け取る行
+            t.cashForSats += line.unitPriceJpy * line.qty    // 現金で受け取る行
         }
-        t.cash += line.priceJpy * line.qty               // 現金合計には全部足す
+        t.cash += line.unitPriceJpy * line.qty               // 現金合計には全部足す
     }
     return t
 }
@@ -126,7 +127,7 @@ struct TotalLines {
 
 func totalLines(_ cart: [CartLine]) -> TotalLines {
     let t = totals(cart)
-    let hasSats = cart.contains { $0.priceSats != nil }
+    let hasSats = cart.contains { $0.unitPriceSats != nil }
 
     let satsLine: String
     if !hasSats {
@@ -172,7 +173,7 @@ struct CartRow: View {
                     Text(line.name).font(.body)
                 }
                 // 円単価 ・ sats単価
-                Text("¥\(line.priceJpy) ・ \(satsText)")
+                Text("¥\(line.unitPriceJpy) ・ \(satsText)")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -186,7 +187,7 @@ struct CartRow: View {
             }
 
             // 小計（円）
-            Text("¥\(line.priceJpy * line.qty)")
+            Text("¥\(line.unitPriceJpy * line.qty)")
                 .frame(width: 80, alignment: .trailing)
         }
         .padding(.vertical, 6)
@@ -194,7 +195,7 @@ struct CartRow: View {
 
     // sats単価が空（nil）なら「―（現金）」
     private var satsText: String {
-        if let s = line.priceSats { return "\(s) sats" }
+        if let s = line.unitPriceSats { return "\(s) sats" }
         return "―（現金）"
     }
 

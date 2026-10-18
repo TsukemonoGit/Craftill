@@ -37,13 +37,14 @@ struct Product: Identifiable {
 }
 
 // ── カートの1行（登録商品と野良を同じ形で持つ）──
-struct CartLine: Identifiable {
-    let id: String
-    let name: String
-    let priceJpy: Int
-    let priceSats: Int?
+struct CartLine {
+    let id: String          // 登録商品は商品ID、野良は "ADHOC-1" など
+    let typeId: String?     // 登録商品は種類ID、野良は nil
+    let name: String        // カートに入れた時点の商品名
+    let unitPriceJpy: Int   // カートに入れた時点の円単価
+    let unitPriceSats: Int? // カートに入れた時点のsats単価
     var qty: Int
-    let isAdhoc: Bool        // 野良かどうか
+    let isAdhoc: Bool       // 野良かどうか
 }
 
 // ── 商品のサンプル（../開発/6_データベース.md）──
@@ -56,10 +57,10 @@ let products: [Product] = [
 
 // ── カートの初期値（親が持つ状態）──
 let initialCart: [CartLine] = [
-    CartLine(id: "KH-001", name: "キーホルダー 01", priceJpy: 800, priceSats: 1200, qty: 1, isAdhoc: false),
-    CartLine(id: "ST-001", name: "ステッカー まる",  priceJpy: 300, priceSats: 500,  qty: 2, isAdhoc: false),
-    CartLine(id: "ST-003", name: "ステッカー しかく", priceJpy: 300, priceSats: nil, qty: 1, isAdhoc: false),
-    CartLine(id: "ADHOC-1", name: "委託品A", priceJpy: 1200, priceSats: nil, qty: 1, isAdhoc: true),   // 野良
+    CartLine(id: "KH-001", typeId: "keyholder", name: "キーホルダー 01", unitPriceJpy: 800, unitPriceSats: 1200, qty: 1, isAdhoc: false),
+    CartLine(id: "ST-001", typeId: "sticker", name: "ステッカー まる", unitPriceJpy: 300, unitPriceSats: 500, qty: 2, isAdhoc: false),
+    CartLine(id: "ST-003", typeId: "sticker", name: "ステッカー しかく", unitPriceJpy: 300, unitPriceSats: nil, qty: 1, isAdhoc: false),
+    CartLine(id: "ADHOC-1", typeId: nil, name: "委託品A", unitPriceJpy: 1200, unitPriceSats: nil, qty: 1, isAdhoc: true),   // 野良
 ]
 ```
 
@@ -126,19 +127,19 @@ struct CartRow: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(line.name)                              // 親から渡された値
-                Text("¥\(line.priceJpy) ・ \(satsText)")
+                Text("¥\(line.unitPriceJpy) ・ \(satsText)")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             QuantityStepper(qty: $line.qty)                  // $ で Binding を渡す
-            Text("¥\(line.priceJpy * line.qty)").frame(width: 80, alignment: .trailing)
+            Text("¥\(line.unitPriceJpy * line.qty)").frame(width: 80, alignment: .trailing)
             Button("削除", action: onDelete)                 // 押されたら親の処理を呼ぶ
         }
         .padding(.vertical, 6)
     }
 
     // sats単価が空（nil）なら「―（現金）」
-    private var satsText: String { line.priceSats.map { "\($0) sats" } ?? "―（現金）" }
+    private var satsText: String { line.unitPriceSats.map { "\($0) sats" } ?? "―（現金）" }
 }
 ```
 
@@ -188,7 +189,7 @@ struct CartView: View {
         .frame(width: 580, height: 440)
     }
 
-    private var totalJpy: Int { cart.reduce(0) { $0 + $1.priceJpy * $1.qty } }
+    private var totalJpy: Int { cart.reduce(0) { $0 + $1.unitPriceJpy * $1.qty } }
 
     private func delete(_ id: String) {
         cart.removeAll { $0.id == id }

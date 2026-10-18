@@ -15,6 +15,7 @@ sats払いはWoS（Wallet of Satoshi）を使うため、通信が要ると見�
 ```swift
 struct Product {
     let id: String
+    let typeId: String       // 種類ID（"sticker" など）
     let name: String
     let priceJpy: Int
     let priceSats: Int?   // nil は「sats単価なし（現金で受け取る）」
@@ -23,11 +24,13 @@ struct Product {
 
 // カートの1行
 struct CartLine {
-    let id: String
-    let name: String
-    let unitPriceJpy: Int
-    let unitPriceSats: Int?   // nil は「sats単価なし（現金で受け取る）」
+    let id: String          // 登録商品は商品ID、野良は "ADHOC-1" など
+    let typeId: String?     // 登録商品は種類ID、野良は nil
+    let name: String        // カートに入れた時点の商品名
+    let unitPriceJpy: Int   // カートに入れた時点の円単価
+    let unitPriceSats: Int? // カートに入れた時点のsats単価
     var qty: Int
+    let isAdhoc: Bool       // 野良かどうか
 }
 
 struct Cart {
@@ -36,19 +39,19 @@ struct Cart {
 
 // 6_データベース.md のサンプル（一部抜粋。KH-003〜KH-020 も同様）
 let products: [Product] = [
-    Product(id: "ST-001", name: "ステッカー まる",   priceJpy: 300, priceSats: 500,  stock: 10),
-    Product(id: "ST-002", name: "ステッカー さんかく", priceJpy: 300, priceSats: 500,  stock: 10),
-    Product(id: "ST-003", name: "ステッカー しかく",  priceJpy: 300, priceSats: nil,  stock: 10),
-    Product(id: "KH-001", name: "キーホルダー 01",   priceJpy: 800, priceSats: 1200, stock: 1),
-    Product(id: "KH-002", name: "キーホルダー 02",   priceJpy: 800, priceSats: 1200, stock: 1),
-    Product(id: "KH-008", name: "キーホルダー 08",   priceJpy: 800, priceSats: 1200, stock: 1),
+    Product(id: "ST-001", typeId: "sticker", name: "ステッカー まる",   priceJpy: 300, priceSats: 500,  stock: 10),
+    Product(id: "ST-002", typeId: "sticker", name: "ステッカー さんかく", priceJpy: 300, priceSats: 500,  stock: 10),
+    Product(id: "ST-003", typeId: "sticker", name: "ステッカー しかく",  priceJpy: 300, priceSats: nil,  stock: 10),
+    Product(id: "KH-001", typeId: "keyholder", name: "キーホルダー 01",   priceJpy: 800, priceSats: 1200, stock: 1),
+    Product(id: "KH-002", typeId: "keyholder", name: "キーホルダー 02",   priceJpy: 800, priceSats: 1200, stock: 1),
+    Product(id: "KH-008", typeId: "keyholder", name: "キーホルダー 08",   priceJpy: 800, priceSats: 1200, stock: 1),
 ]
 
 // カートに商品を1行足す（数量1。在庫チェックや重複判定はここでは省略）
 func addLine(_ product: Product, to cart: inout Cart) {
-    let line = CartLine(id: product.id, name: product.name,
+    let line = CartLine(id: product.id, typeId: product.typeId, name: product.name,
                         unitPriceJpy: product.priceJpy,
-                        unitPriceSats: product.priceSats, qty: 1)
+                        unitPriceSats: product.priceSats, qty: 1, isAdhoc: false)
     cart.lines.append(line)
 }
 ```

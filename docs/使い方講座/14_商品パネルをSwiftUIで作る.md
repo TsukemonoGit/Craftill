@@ -59,10 +59,22 @@ struct Product: Identifiable {
     var imageName: String { id }
 }
 
-// ── カートの1行（この画面では表示用の模擬）──
+// ── カートの行（形は 03_レッスン.md レッスン2 で決めたものと同じ）──
 struct CartLine {
-    let product: Product
+    let id: String          // 登録商品は商品ID、野良は "ADHOC-1" など
+    let typeId: String?     // 登録商品は種類ID、野良は nil
+    let name: String        // カートに入れた時点の商品名
+    let unitPriceJpy: Int   // カートに入れた時点の円単価
+    let unitPriceSats: Int? // カートに入れた時点のsats単価
     var qty: Int
+    let isAdhoc: Bool       // 野良かどうか
+}
+
+/// 登録商品からカートの行を作る
+func line(_ p: Product, qty: Int) -> CartLine {
+    CartLine(id: p.id, typeId: p.typeId, name: p.name,
+             unitPriceJpy: p.priceJpy, unitPriceSats: p.priceSats,
+             qty: qty, isAdhoc: false)
 }
 
 // ── 種類定義（../開発/6_データベース.md より）
@@ -124,7 +136,7 @@ func panelState(for product: Product, cart: [CartLine]) -> PanelState {
     if (product.stock ?? 0) <= 0 { return .soldOut }
     // 一点物型がすでにカートにある → 追加済み
     if product.stockMode == .unique,
-       cart.contains(where: { $0.product.id == product.id }) {
+       cart.contains(where: { $0.id == product.id }) {
         return .added
     }
     return .normal
@@ -260,17 +272,17 @@ struct ProductPanelView: View {
     }
 
     private var cartText: String {
-        cart.isEmpty ? "空" : cart.map { "\($0.product.id)×\($0.qty)" }.joined(separator: ", ")
+        cart.isEmpty ? "空" : cart.map { "\($0.id)×\($0.qty)" }.joined(separator: ", ")
     }
 
     /// マスをタップしたときの追加処理。
     private func tap(_ p: Product) {
         switch panelState(for: p, cart: cart) {
         case .normal:
-            if let i = cart.firstIndex(where: { $0.product.id == p.id }) {
+            if let i = cart.firstIndex(where: { $0.id == p.id }) {
                 cart[i].qty += 1              // 数量管理型・在庫管理なし型は数量+1
             } else {
-                cart.append(CartLine(product: p, qty: 1))   // 一点物型は常に1
+                cart.append(line(p, qty: 1))   // 一点物型は常に1
             }
             notice = ""
         case .soldOut:

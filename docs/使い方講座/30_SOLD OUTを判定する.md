@@ -71,9 +71,22 @@ let products: [Product] = [
 ]
 
 // ── カート（メモリ上の1行）──────────────
+// ── カートの行（形は 03_レッスン.md レッスン2 で決めたものと同じ）──
 struct CartLine {
-    var product: Product
+    let id: String          // 登録商品は商品ID、野良は "ADHOC-1" など
+    let typeId: String?     // 登録商品は種類ID、野良は nil
+    let name: String        // カートに入れた時点の商品名
+    let unitPriceJpy: Int   // カートに入れた時点の円単価
+    let unitPriceSats: Int? // カートに入れた時点のsats単価
     var qty: Int
+    let isAdhoc: Bool       // 野良かどうか
+}
+
+/// 登録商品からカートの行を作る
+func line(_ p: Product, qty: Int) -> CartLine {
+    CartLine(id: p.id, typeId: p.typeId, name: p.name,
+             unitPriceJpy: p.priceJpy, unitPriceSats: p.priceSats,
+             qty: qty, isAdhoc: false)
 }
 var cart: [CartLine] = []
 ```
@@ -126,7 +139,7 @@ func productType(_ product: Product) -> ProductType? {
 
 // カートに入っている数量（無ければ0）
 func cartQty(_ id: String) -> Int {
-    cart.first { $0.product.id == id }?.qty ?? 0
+    cart.first { $0.id == id }?.qty ?? 0
 }
 
 /// 商品パネルの表示を決める。
@@ -166,10 +179,10 @@ func tapPanel(_ product: Product) -> Bool {
         print("\(product.id): \(state.label) なので追加しない")
         return false
     }
-    if let i = cart.firstIndex(where: { $0.product.id == product.id }) {
+    if let i = cart.firstIndex(where: { $0.id == product.id }) {
         cart[i].qty += 1
     } else {
-        cart.append(CartLine(product: product, qty: 1))
+        cart.append(line(product, qty: 1))
     }
     print("\(product.id): カートに追加した")
     return true

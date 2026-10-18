@@ -133,10 +133,15 @@ C# や TS の enum は単なる数値の別名だが、Swift の enum はケー�
 ```swift
 struct Product { let name: String }
 
-// カート行
+// カートの1行（形は 03_レッスン.md レッスン2 で決めたものと同じ）
 struct CartLine {
-    let product: Product
+    let id: String
+    let typeId: String?
+    let name: String
+    let unitPriceJpy: Int
+    let unitPriceSats: Int?
     var qty: Int
+    let isAdhoc: Bool
 }
 
 // 追加結果（成功時は商品と数量、失敗時はエラー理由を持つ）
