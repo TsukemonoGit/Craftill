@@ -17,11 +17,12 @@ struct ProductType: Codable, Equatable, Identifiable {
     var name: String           // 表示名（例: "ステッカー"）
     var idPrefix: String       // ID 接頭辞（例: "ST"）。種類間で一意
     var idDigits: Int          // ID 番号の桁数（例: 3）
-    var stockMode: StockMode   // 在庫の扱い ← **商品ではなく種類が持つ**（P5）
-    var attrLabel1: String?    // 属性ラベル（最大3・左から詰める。仮置き Q20）
-    var attrLabel2: String?
-    var attrLabel3: String?
-    var updatedAt: Date?       // 仕様書に更新ルールが無いので Optional（P4）
+    var stockMode: StockMode   // 在庫の扱い ← **商品ではなく種類が持つ**（A-19-9）
+
+    var attrLabel1: String? = nil    // 属性ラベル（最大3・左から詰める。仮置き Q20）
+    var attrLabel2: String? = nil
+    var attrLabel3: String? = nil
+    var updatedAt: Date? = nil       // 更新ルールが無いので Optional（A-19-9）
 
     var id: String { typeId }
 }
@@ -37,12 +38,15 @@ struct Product: Codable, Equatable, Identifiable {
     var priceJpy: Int          // 円価格（1以上）
     var priceSats: Int?        // nil = sats単価なし。sats払いでも現金で受け取る（A-6-1）
     var stock: Int?            // nil = 在庫管理なし型。counted/unique なら必ず値を持つ
-    var attr1: String?
-    var attr2: String?
-    var attr3: String?
-    var imageRef: String?      // 同梱画像への参照。**B へは送らない**（A-14）
-    var isPublic: Bool         // 公開状態（CSV では 1/0）
-    var updatedAt: Date?
+
+    // ---- ここから先は「使いたいときだけ書く」 ----
+    // CSV取り込み・画像・公開状態に Needed ときだけ書く（A-1、A-13）
+    var attr1: String? = nil
+    var attr2: String? = nil
+    var attr3: String? = nil
+    var imageRef: String? = nil      // 同梱画像への参照。**B へは送らない**（A-14）
+    var isPublic: Bool = false       // 公開状態（CSV では 1/0）
+    var updatedAt: Date? = nil
 
     /// 在庫を持たない型かどうか（種類を引いて判定する）
     func managesStock(in types: [ProductType]) -> Bool {
@@ -251,6 +255,7 @@ struct IdSequencer {
     private var saleCounters: [String: Int] = [:]   // "20261013" → その日の次番
     private var movementSeq = 0
     private var logSeq = 0
+    private var adhocSeq = 0
 
     /// 販売ID。日付ごとに 001 から数え直す。
     mutating func nextSaleID(at date: Date) -> String {
@@ -275,6 +280,13 @@ struct IdSequencer {
     mutating func nextLogID() -> String {
         logSeq += 1
         return "L-" + pad(logSeq, 6)
+    }
+
+    /// 野良のカート行ID（A-19-10）。**野良をカートに追加した瞬間に**採番する。
+    /// 販売ID不像（A-19-4）、会計が完了するまでには存在しないため。
+    mutating func nextAdhocID() -> String {
+        adhocSeq += 1
+        return "ADHOC-" + pad(adhocSeq, 2)
     }
 
     /// 取り消しても番号は戻らない。再利用しない（A-19-4）
@@ -376,4 +388,5 @@ print("sale_id:", s1, s2, s3)
 print("item_id:", ids.itemID(saleId: s1, n: 1), ids.itemID(saleId: s1, n: 12))
 print("movement_id:", ids.nextMovementID(), ids.nextMovementID())
 print("log_id:", ids.nextLogID())
+print("adhoc_id:", ids.nextAdhocID(), ids.nextAdhocID())
 print("同日判定:", DayKey.isSameDay(day1, day1), DayKey.isSameDay(day1, day2))
