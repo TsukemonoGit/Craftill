@@ -118,6 +118,13 @@ struct Sale: Codable, Equatable, Identifiable {
     var confirmedAt: Date?     // sats入金の確認時刻
     var refunded: Bool         // 返金済みフラグ（sats分）
     var completedAt: Date?     // 完了日時。sats確認済みで中断した会計は nil（A-4）
+    /// **A-13 の列名**に合わせる。Swift では `id` だけど列は `sale_id`。
+    /// `keyEncodingStrategy = .convertToSnakeCase` だけだと `id` になってしまいます。
+    enum CodingKeys: String, CodingKey {
+        case id = "sale_id"
+        case status, method, totalJpy, totalSats, receivedJpy, changeJpy
+        case confirmedAt, refunded, completedAt
+    }
 }
 
 struct SaleItem: Codable, Equatable, Identifiable {
@@ -131,6 +138,12 @@ struct SaleItem: Codable, Equatable, Identifiable {
     var unitPriceSats: Int?    // 販売時点のsats単価。nil = この行は現金で受け取る
     var paidIn: PaidIn
     var nameSnapshot: String   // 販売時点の商品名
+    /// **A-13 の列名**に合わせる。`id` → `item_id`。
+    enum CodingKeys: String, CodingKey {
+        case id = "item_id"
+        case saleId, itemType, typeId, productId, qty
+        case unitPriceJpy, unitPriceSats, paidIn, nameSnapshot
+    }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -320,6 +333,13 @@ extension CartLine {
 
 /// カートの合計（A-3、A-6-1）
 extension Array where Element == CartLine {
+    /// **sats払いが選べるか**（A-6-1）。
+    /// `move(_:in:)` の `.chooseSats` の guard もこれを見る（`base/6` §4）。
+    /// 画面が「sats払いが選べるか」を判定するときも、**ここだけ**を見る。
+    func canPayBySats() -> Bool {
+        contains { $0.unitPriceSats != nil }
+    }
+
     func totals() -> Totals {
         var t = Totals()
         for line in self {
