@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """base/ の正となるコードがswiftで動くか、期待される出力と一致するかを確認する。
 
-    python3 verify.py            # 両方
+    python3 verify.py            # 型・標準ロジック・カート編集
     python3 verify.py types      # 型だけ
     python3 verify.py logic      # 型＋標準ロジック＋通しの確認
+    python3 verify.py cart       # 型＋カート編集＋通しの確認
+    python3 verify.py flow       # 型＋標準ロジック＋状態機械＋通しの確認
     python3 verify.py 08         # 追加lessonのコードも確認
 
+## コードブロックの書き方
+
+` ```swift ` … コンパイル対象。このファイル内では**名前を重複させない**こと。
+` ```swift NG ` … **わざと間違う例**。スキップする（直らないのが目的）。
+` ```swift 断片 ` … 本文用の切りはし。スキップする。
+` ```swiftui ` … SwiftUI。スキップする（`swift ファイル.swift` では動かない）。
+
 何をしているか:
-  1. `2_型定義.md` / `3_標準ロジック.md` の中の ```swift ブロックを連結して
-     1本のswiftファイルにする
+  1. `2_型定義.md` / `3_標準ロジック.md` / `5_カート編集.md` の中の
+     コンパイル対象ブロックを連結して1本のswiftファイルにする
   2. `swiftc -typecheck` で型チェック
   3. `swift` で実行し、出力を「期待される出力」と1行ずつ照合する
 """
@@ -20,6 +29,25 @@ from pathlib import Path
 from typing import Optional
 
 BASE = Path(__file__).resolve().parent
+
+# レッスンを検証するとき、先に置く base の正となるコード
+PRELUDE = {
+    "09_カートを編集する": ["2_型定義.md", "5_カート編集.md"],
+    "56_会計の状態を切り替える": ["2_型定義.md", "3_標準ロジック.md", "6_会計の状態機械.md"],
+}
+
+
+def prelude_blocks(lesson: Path) -> str:
+    """指定されたレッスンの土台になる base のコード"""
+    names = PRELUDE.get(lesson.stem)
+    if not names:
+        return ""
+    parts = []
+    for name in names:
+        blocks = swift_blocks(BASE / name)
+        use = blocks[:2] if name == "2_型定義.md" else blocks[:-1]
+        parts.append("\n\n".join(use))
+    return "\n\n".join(parts) + "\n\n"
 RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
@@ -27,7 +55,16 @@ OFF = "\033[0m"
 
 
 def swift_blocks(md: Path):
-    return re.findall(r"```swift\n(.*?)```", md.read_text(encoding="utf-8"), re.S)
+    """```swift だけを取り出す。
+
+    ```swift NG / ```swift 断片 / ```swiftui は落とす
+    （info のうしろに補足があるものは対象外）。
+    """
+    out = []
+    for m in re.finditer(r"```(\S*)([^\n]*)\n(.*?)```", md.read_text(encoding="utf-8"), re.S):
+        if m.group(1) == "swift" and not m.group(2).strip():
+            out.append(m.group(3))
+    return out
 
 
 def expected_after(md: Path, heading: str):
@@ -50,7 +87,7 @@ def typecheck_run(src: str, label: str):
         r = subprocess.run(["swiftc", "-typecheck", str(f)],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            print(f"{RED}NG{_OFF} {label}: 型チェックでエラー")
+            print(f"{RED}NG{OFF} {label}: 型チェックでエラー")
             print("\n".join(r.stderr.split("\n")[:20]))
             return None
         print(f"{GREEN}OK{OFF} {label}: 型チェック")
@@ -83,7 +120,7 @@ def check(label: str, src: str, want: Optional[str]):
         return 0
     bad = diff_lines(got, want)
     if bad:
-        print(f"{RED}NG{_OFF} {label}: 出力が {len(bad)} 行違う")
+        print(f"{RED}NG{OFF} {label}: 出力が {len(bad)} 行違う")
         for n, w, a in bad[:15]:
             print(f"  {n}行目 期待: {w}")
             print(f"        実際: {a}")
@@ -107,18 +144,33 @@ def main() -> int:
     if what in ("all", "logic"):
         l_md = BASE / "3_標準ロジック.md"
         l_blocks = swift_blocks(l_md)
-        # ロジックのブロックの最後が「通しの確認」。型・JSON方針 Definitionsと抱き合わせる
         src = t_blocks[0] + "\n" + t_blocks[1] + "\n\n" + "\n\n".join(l_blocks)
         fail += check("3_標準ロジック.md（通し）", src,
                       expected_after(l_md, "## 9. 通しの確認"))
 
-    if what not in ("all", "types", "logic"):
-        p = BASE / (what if what.endswith(".md") else what + ".md")
+    if what in ("all", "flow"):
+        f_md = BASE / "6_会計の状態機械.md"
+        f_blocks = swift_blocks(f_md)
+        l_blocks = swift_blocks(BASE / "3_標準ロジック.md")
+        src = t_blocks[0] + "\n" + t_blocks[1] + "\n\n" + "\n\n".join(l_blocks[:-1]) \
+              + "\n\n" + "\n\n".join(f_blocks)
+        fail += check("6_会計の状態機械.md（通し）", src,
+                      expected_after(f_md, "## 7. 通しの確認"))
+
+    if what in ("all", "cart"):
+        c_md = BASE / "5_カート編集.md"
+        c_blocks = swift_blocks(c_md)
+        src = t_blocks[0] + "\n" + t_blocks[1] + "\n\n" + "\n\n".join(c_blocks)
+        fail += check("5_カート編集.md（通し）", src,
+                      expected_after(c_md, "## 6. 通しの確認"))
+
+    if what not in ("all", "types", "logic", "cart", "flow"):
+        p = BASE.parent / (what if what.endswith(".md") else what + ".md")
         if not p.exists():
-            print(f"{RED}NG{_OFF} {p.name} が見つからない")
+            print(f"{RED}NG{OFF} {p.name} が見つからない")
             return 1
-        fail += check(p.name, "\n".join(swift_blocks(p)),
-                      expected_after(p, "#"))
+        src = prelude_blocks(p) + "\n".join(swift_blocks(p))
+        fail += check(p.name, src, expected_after(p, "#"))
 
     return 1 if fail else 0
 

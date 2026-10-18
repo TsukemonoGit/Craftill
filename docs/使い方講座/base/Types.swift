@@ -12,7 +12,7 @@ enum StockMode: String, Codable, CaseIterable {
 }
 
 /// 商品の種類。**在庫の扱い・ID形式・カート挙動・属性を定める**（A-1）。
-struct ProductType: Codable, Identifiable {
+struct ProductType: Codable, Equatable, Identifiable {
     let typeId: String         // 例: "sticker"
     var name: String           // 表示名（例: "ステッカー"）
     var idPrefix: String       // ID 接頭辞（例: "ST"）。種類間で一意
@@ -30,7 +30,7 @@ struct ProductType: Codable, Identifiable {
 // 2. 商品（products）— **在庫表そのもの**。現在庫の正（A-7）。
 // ════════════════════════════════════════════════════════════
 
-struct Product: Codable, Identifiable {
+struct Product: Codable, Equatable, Identifiable {
     let id: String             // 商品ID（例: "KH-008"）
     var typeId: String         // 属する種類（product_types へ）
     var name: String
@@ -67,7 +67,7 @@ enum ItemType: String, Codable {
 
 /// カートの1行。**在庫を持たない**（A-7）。
 /// 現在の在庫は必ず在庫表（`[Product]`）を見ます。
-struct CartLine: Codable, Identifiable {
+struct CartLine: Codable, Equatable, Identifiable {
     let id: String             // 登録商品は商品ID。野良は "ADHOC-1" など
     var typeId: String?        // 登録商品は種類ID。野良は nil
     var name: String           // カートに入れた時点の商品名（= name_snapshot）
@@ -103,7 +103,7 @@ enum PaidIn: String, Codable {
     case sats                  // satsで受け取る
 }
 
-struct Sale: Codable, Identifiable {
+struct Sale: Codable, Equatable, Identifiable {
     let id: String             // 販売ID
     var status: SaleStatus
     var method: PaymentMethod
@@ -116,7 +116,7 @@ struct Sale: Codable, Identifiable {
     var completedAt: Date?     // 完了日時。sats確認済みで中断した会計は nil（A-4）
 }
 
-struct SaleItem: Codable, Identifiable {
+struct SaleItem: Codable, Equatable, Identifiable {
     let id: String             // 明細ID
     let saleId: String
     var itemType: ItemType
@@ -140,7 +140,7 @@ enum MovementReason: String, Codable {
     case adjust  = "adjust"    // 手動調整（棚卸し）
 }
 
-struct StockMovement: Codable, Identifiable {
+struct StockMovement: Codable, Equatable, Identifiable {
     let id: String
     let productId: String
     let delta: Int             // 増減数（- / +）
@@ -179,14 +179,14 @@ struct Totals {
 // 8. B へ送るスナップショット（A-14）— **Product とは別型**
 // ════════════════════════════════════════════════════════════
 
-struct SnapshotType: Codable {
+struct SnapshotType: Codable, Equatable {
     let typeId: String
     let name: String
     let stockMode: StockMode
     let attrLabels: [String]   // 空を含めない
 }
 
-struct SnapshotProduct: Codable {
+struct SnapshotProduct: Codable, Equatable {
     let productId: String
     let typeId: String
     let name: String
@@ -197,7 +197,7 @@ struct SnapshotProduct: Codable {
     let hasImage: Bool         // 保持項目ではない。imageRef から導出する（A-14）
 }
 
-struct Snapshot: Codable {
+struct Snapshot: Codable, Equatable {
     let createdAt: Date        // スナップショット作成時刻
     let types: [SnapshotType]
     let products: [SnapshotProduct]
@@ -212,7 +212,7 @@ enum SyncResult: String, Codable {
     case failed
 }
 
-struct SyncLogEntry: Codable, Identifiable {
+struct SyncLogEntry: Codable, Equatable, Identifiable {
     let id: String
     let at: Date
     let result: SyncResult
