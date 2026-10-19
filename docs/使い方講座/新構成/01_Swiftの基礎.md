@@ -184,20 +184,30 @@ print(s.isFinished()) // false（メソッドはカッコが要る）
 > Svelteでいうと、`var label { ... }` は **getter**（`get label() { ... }`）、`self` は **`this`** のイメージ。
 
 ---
+以下の「View（画面）の中の変数はどこに書く？」のセクションを、`body` が計算プロパティであること、および `productID` がストアドプロパティであることを明確に区別する内容に修正してください。
+
+---
 
 ## View（画面）の中の変数はどこに書く？
-`struct QRView: View` も `struct Product` と同じ**構造体**。`var body` が「画面に出す中身」。
-変数は **`var body` の外（構造体の直下）** に書く。
+`struct QRView: View` も `struct Product` と同じ**構造体**です。
+ここで重要なのは、構造体の中のプロパティが「格納型」と「計算型」の2種類に分かれることです。
 
 ```swift
 struct QRView: View {
-    let productID = "KH-008"   // ← ここ（body の外）に変数を書く
+    // 1. ストアドプロパティ（格納型プロパティ）
+    // インスタンス生成時に値がメモリに保持される。計算は行わない。
+    let productID = "KH-008"
 
+    // 2. 計算プロパティ（Computed Property）
+    // アクセスされるたびに { } の中を実行し、UIの構造を計算して返す。
+    // 値をメモリに保持せず、Viewプロトコルが必須とする要件。
     var body: some View {
-        Text(productID)        // body の中で使える
+        Text(productID)        // 上で定義したストアドプロパティを参照して使える
     }
 }
 ```
+
+変数（状態やデータ）は、基本的に **`body` の外（構造体の直下）にストアドプロパティとして**書きます。`body` はあくまで「そのプロパティの値を使って、画面に何を出力するかを計算する場所」です。
 
 ### `let` か `@State` か
 | 書き方 | いつ使う | 変えたら画面は更新される？ |
@@ -205,33 +215,33 @@ struct QRView: View {
 | `let productID = "KH-008"` | 決まった値（変わらない） | ー（変えられない） |
 | `@State var count = 0` | 途中で変わる値 | ✅ 更新される |
 
-- ふつうの `var` に変わる値を入れても**画面は更新されない**。変わる値は **`@State`**
-- `@State` を変えると SwiftUI が `body` をもう一度実行して**画面を描き直す**
+- ふつうの `var` に変わる値を入れても**画面は更新されない**。変わる値は **`@State`** を付ける
+- `@State` を変えると SwiftUI が `body`（計算プロパティ）をもう一度実行して**画面を描き直す**
 
 ```swift
 struct CounterView: View {
-    @State var count = 0             // 変わる値
+    @State var count = 0             // 変わる値（ストアドプロパティ）
 
-    var body: some View {
+    var body: some View {            // 計算プロパティ
         VStack {
             Text("\(count)")
-            Button("+1") { count += 1 }   // 変えると画面が更新される
+            Button("+1") { count += 1 }   // 変えると body が再計算され画面が更新される
         }
     }
 }
 ```
 
 ### 書く場所のルール
-- `var body` の**上**に書く（プロパティ）
-- `body { }` の中に `let x = ...` と書くこともできるが、それは**毎回作り直される一時的な値**
+- `var body` の**上**に書く（構造体のプロパティとして定義）
+- `body { }` の中に `let x = ...` と書くこともできるが、それは**呼び出されるたびに作り直される一時的なローカル変数**
 - 画面をまたいで使う値・後で変えたい値は**プロパティ**として外に書く
 
 ### QRViewの場合
 ```swift
 struct QRView: View {
-    let productID = "KH-008"   // 決まった値 → let
+    let productID = "KH-008"   // 決まった値 → ストアドプロパティとして外に定義
 
-    var body: some View {
+    var body: some View {      // 計算プロパティ
         VStack(spacing: 12) {
             Text(productID)
             if let img = makeQR(productID) { ... }
@@ -239,7 +249,7 @@ struct QRView: View {
     }
 }
 ```
-→ `productID` を1か所にまとめたので、変えたい時は**ここだけ**変更すれば表示とQRの両方に効く。
+→ `productID` を1か所にまとめたので、変えたい時は**ここだけ**変更すれば、`body` 内の計算結果（表示とQRの両方）に自動的に反映される。
 
 ---
 
