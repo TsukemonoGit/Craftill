@@ -1,11 +1,10 @@
-# 初心者メモ（Swift超入門）
+# Swiftの基礎 ― データと関数の形
 
-SwiftもPlaygroundsも初めての方向け。分からない言葉が出たらここに戻る。
-対象は `02_練習メニュー.md` の「2. 商品モデルを作る」で出てくるコード。
+> **前:** [はじめに](00_はじめに.md) ｜ **入口:** [はじめに](00_はじめに.md) ｜ **次:** [Optionalと安全](02_Optionalと安全.md)
 
-> Svelteが分かる人は、`04_Svelteで理解するSwift.md` の対応表も見ると早い。
-
----
+Swiftの文法と、このアプリで使うデータの形をまとめたファイルです。
+`struct` / `enum` / 関数 / 型 / 引数 / SwiftUIの変数の置き場所を扱います。
+Optionalとクラッシュの話は `02_Optionalと安全.md` に分けています。
 
 ## Playgrounds って？
 iPadの**Swift練習帳アプリ**。コードを書いて、すぐ実行して、結果を見られる。ファイルを作らなくていい。
@@ -88,39 +87,8 @@ struct Product {
 | `: Int?` の `?` | **あるかも / 空っぽかも**（オプショナル。下で説明） |
 
 > 補足: `let id, name: String` は「id と name は両方 String」という**省略した書き方**。上の例は1行ずつ書いた版で意味は同じ。
-
-## `Int?` の `?`（オプショナル）って？
-**「値が入っているかもしれないし、何も入っていない(nil)かもしれない」** という意味。
-- `ST-003` は satsの値段が**空（NULL）**。それが `nil`（ニル＝空っぽ）
-- `nil` のときは「sats払いはできない」と判断する
-
-使うときは、空かどうか確認してから取り出す：
-```swift
-if let sats = product.priceSats {   // 入っていれば取り出す
-    print("sats価格は \(sats)")
-} else {
-    print("この商品はsats払いなし") // 空っぽのとき
-}
-```
-
-## `guard let` って？
-`if let` の親戚。「**ダメなら先に抜ける**」書き方。`06_QRを試す.md` に `guard let ciImage = filter.outputImage else { return nil }` として出てくる。
-
-```swift
-guard let sats = product.priceSats else {
-    print("この商品はsats払いなし")
-    return          // ← else の中は必ず抜ける（return / break / continue / throw）
-}
-print("sats価格は \(sats)")   // ここでは sats が使える（nil でないと確定）
-```
-
-| | 取り出した値が使える範囲 | 向いてる用途 |
-| --- | --- | --- |
-| `if let` | `{ }` の中だけ | 条件分岐 |
-| `guard let` | **そのあと全部** | ダメな時は先に抜ける（early return） |
-
-- `guard` の `else` は**必ず抜ける**必要がある。抜けないとエラー
-- 「失敗なら先に帰る」ことで、本筋のコードの**ネストが浅くなる**
+>
+> **実際に使う `Product` は `base/Types.swift` に1つだけある**（`typeId` など項目が増える）。ここは形をつかむための簡略版。`base` と混ぜて貼ると二重定義になるので、レッスンでは `base` の方を使う。
 
 ## 関数の戻り値と `->`
 
@@ -159,8 +127,7 @@ print(r.min, r.max)   // 3 5
 
 - `->` は「この関数が返す型」を表す
 - 何も返さない関数は `->` ごと省略するのが普通の書き方
-- レッスン4の `totals` は、タプルを返す書き方
-
+- レッスン4の `totalLines` は、`(satsLine: String, cashLine: String)` という**タプル**を返す書き方（`totals()` 本体は `Totals` 構造体を返す）
 
 ## `enum StockMode` って？
 **「決まった選択肢のうち、どれか1つ」** を表す型（`enum`＝列挙型）。
@@ -178,6 +145,8 @@ enum StockMode {
 ### enum の中にプロパティやメソッドを書ける
 他の言語の `enum` は「定数の集まり」で終わりのことが多い。でも **Swiftの `enum` は“型”なので、中にプロパティ（getter）やメソッドを書ける**。
 「その状態についての情報は、状態自身に持たせる」という書き方ができる。
+
+> 実際の `SaleState` は `base/Types.swift` に**8状態**ある（`03_レジアプリの設計.md` のレッスン6）。ここは説明用に3つだけ書く。
 
 ```swift
 enum SaleState {
@@ -213,40 +182,6 @@ print(s.isFinished()) // false（メソッドはカッコが要る）
 - `case .idle:` は `case SaleState.idle:` の省略形
 
 > Svelteでいうと、`var label { ... }` は **getter**（`get label() { ... }`）、`self` は **`this`** のイメージ。
-
----
-
-## 全部つなげた例（Playgroundsに貼ってみてOK）
-```swift
-struct Product {
-    let id: String
-    let name: String
-    let priceJpy: Int
-    let priceSats: Int?
-    var stock: Int?
-}
-
-enum StockMode {
-    case counted
-    case unique
-    case none
-}
-
-let kh008 = Product(id: "KH-008", name: "キーホルダー 08",
-                    priceJpy: 800, priceSats: 1200, stock: 1)
-print(kh008.name)      // キーホルダー 08
-print(kh008.priceJpy)  // 800
-
-let st003 = Product(id: "ST-003", name: "ステッカー しかく",
-                    priceJpy: 300, priceSats: nil, stock: 10)
-if let sats = st003.priceSats {
-    print("sats価格: \(sats)")
-} else {
-    print("この商品はsats払いなし")  // ← こちらが出る
-}
-```
-
-**コツ**: コピペより**自分で打ち込む**と覚える。少し変えてみる（名前や値段を変える）のも効果的。
 
 ---
 
@@ -326,7 +261,7 @@ Swiftは「**どこで生きるか**」で変数の種類が分かれる。
 - **値型 or 参照型** … `struct` は**渡すとコピー**。だから View の `@State` は、View 本体ではなく **SwiftUI が別に持っている**（`struct` のままだと書き換えられないため）
 - 頭に付ける**印**（`@State` / `@Binding` / `@Observable`）で「SwiftUI がどう扱うか」が決まる
 
-> Svelte との対応は `04_Svelteで理解するSwift.md` 参照。
+> Svelte との対応は `05_他言語から見たSwift.md` 参照。
 
 ---
 
@@ -514,3 +449,115 @@ addProduct(しな: "KH-008", かず: 1)   // ← ラベルは呼び方を変え�
 ```
 - JSDoc（＝Swiftの `///`）は**説明を書く場所** → 日本語でOK
 - ラベルは**呼び出し構文の一部** → 慣習的に英語
+
+## 型を書けば入れられる
+```swift
+let a: Int? = nil        // OK
+var b: Int? = nil        // OK。あとで値を入れられる
+b = 5
+```
+
+## 型を書かないとエラー
+```swift
+// let c = nil           // エラー。nil だけでは何の型の nil か決まらない
+```
+- `nil` は「`Int?` の空」「`String?` の空」など、型ごとに別の空
+- `: Int?` のように型を書いて、何の Optional かを決める
+
+## 型が決まる場面では、型の指定なしで `nil` を渡せる
+```swift
+struct Product {
+    let id: String
+    let priceSats: Int?
+}
+
+let p = Product(id: "ST-003", priceSats: nil)    // priceSats は Int? と決まっているので OK
+```
+- `03_レジアプリの設計.md` のレッスン3の `priceSats: nil` がこの形
+- 実際に使う `Product` は `base/Types.swift` に1つだけある。ここでは形の説明のために最小限を書いている
+
+## `Int`（`?` なし）には入れられない
+```swift
+// let d: Int = nil      // エラー
+```
+- 「値なし」を許したい欄だけ `?` を付ける
+- 在庫のように「管理しない種類がある」欄は `stock: Int?` になる（`base/Types.swift` の `Product`）
+
+## 1. オーバーロード（同じ名前で引数の型違いの関数を2つ書く）
+```swift
+func show(_ s: String) {
+    show([s])                  // 1つのときは配列にして、もう一方に任せる
+}
+
+func show(_ list: [String]) {
+    for s in list {
+        print(s)
+    }
+}
+
+show("abc")                    // String の方が呼ばれる
+show(["a", "b"])               // [String] の方が呼ばれる
+```
+- Swiftは、引数の型が違えば同じ名前の関数を複数書ける
+- 呼ぶ側は、型を意識せず同じ名前で呼べる
+- 実際の処理は片方（配列）に書き、もう片方は変換して渡すだけにする
+
+## 2. 可変長引数（`String...`）
+```swift
+func show(_ items: String...) {
+    for s in items {           // items は [String]
+        print(s)
+    }
+}
+
+show("abc")                    // 1つ
+show("a", "b", "c")            // 複数
+```
+- 呼ぶ側は、値を `,` で並べて渡す
+- 配列をそのまま渡すことはできない
+```swift
+let list = ["a", "b"]
+// show(list)                  // エラー
+```
+
+## 3. enum を引数にする
+```swift
+enum StringOrList {
+    case one(String)
+    case many([String])
+}
+
+func show(_ x: StringOrList) {
+    switch x {
+    case .one(let s):     print(s)
+    case .many(let list): list.forEach { print($0) }
+    }
+}
+
+show(.one("abc"))
+show(.many(["a", "b"]))
+```
+- 呼ぶ側が `.one(...)` / `.many(...)` と書く必要がある
+
+## 4. ジェネリクス（共通の性質で受ける）
+```swift
+func count<T: Collection>(_ x: T) -> Int {
+    x.count
+}
+
+print(count("abc"))            // 3（String は文字の集まり）
+print(count(["a", "b"]))       // 2
+```
+- `String` も `[String]` も「Collection（要素の集まり）」という共通の性質を持つ
+- 上の例は `String` を文字の集まりとして扱うため、`"abc"` が「1つの文字列」ではなく「3文字」として数えられる
+- 「1つの文字列」と「文字列の配列」を区別したい場合には向かない
+- ジェネリクスは `51_ジェネリクスを使う.md` で扱う
+
+## 使い分け
+
+| 方法 | 向いている場面 |
+| --- | --- |
+| オーバーロード | 呼ぶ側を `show("a")` / `show(["a"])` のままにしたい（TypeScript に最も近い） |
+| 可変長引数 | 値を直接並べて渡す使い方が中心 |
+| enum | 3つ以上の型を区別して扱いたい |
+| ジェネリクス | 共通の性質で処理でき、型を区別しなくてよい |

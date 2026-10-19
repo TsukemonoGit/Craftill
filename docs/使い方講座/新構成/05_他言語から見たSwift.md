@@ -1,6 +1,167 @@
-# Swiftの違い（JS / TS / C#経験者向け）
+# 他言語から見たSwift ― Svelte / JS / TS / C#
 
-## 1. 演算子の前後の空白
+> **前:** [画面と保存](04_画面と保存.md) ｜ **入口:** [はじめに](00_はじめに.md) ｜ **次:** [Macへ](06_Macへ_Xcode.md)
+
+すでにSvelteやJS / TS / C#を知っている人向けの比較資料です。
+第1部はSvelteとSwiftUIの対応、第2部はJS / TS / C#とSwiftの文法の違いをまとめています。
+Swiftが初めての場合は、先に `01_Swiftの基礎.md` を読むと分かりやすいです。
+
+## 第1部: Svelteから見るSwift
+
+### 一番大事な違い
+- Swiftは**全部 `.swift` ファイル**。`.svelte` / `.ts` のような拡張子の分け方は無い
+- 役割は**中身**で決まる
+  - `struct ○○: View` に従ったもの＝**UI部品**
+  - それ以外の `func` / `struct` / `class` / `enum`＝**処理**
+- **UIもただのSwiftコード**。境界は「`View` かどうか」だけ
+
+> SwiftUIの View は、Svelteでいう `.svelte` ファイル1個ぶんに近い。
+> 上のほうの `let` / `@State` が `<script>`、`var body` の中がマークアップ。
+
+---
+
+### 対応表（早見）
+| Svelte | Swift / SwiftUI |
+| --- | --- |
+| `.svelte` ファイル | `struct ○○: View { var body: some View }` |
+| `.ts` ファイル | 普通の `.swift`（`func` / `class` / `struct`） |
+| コンポーネントを入れ子 | Viewの中にViewを入れる |
+| `let { prop } = $props()` | Viewのプロパティ `let prop: String`（外から渡す） |
+| `bind:value`（双方向） | `@Binding var value` |
+| `let count = $state(0)` | `@State var count = 0` |
+| 派生値 `let x = $derived(a*2)` | 計算プロパティ `var x: Int { a*2 }` |
+| `$effect(() => {})` | `.onChange { }` / `.task { }` / `.onAppear { }` |
+| store（`writable`） | `@Observable` クラス（古: `ObservableObject`＋`@Published`） |
+| グローバルなstore | 共有した `@Observable` を `@Environment` で配る |
+| `onclick={fn}` | `Button("...") { fn() }` / `.onTapGesture { }` |
+| `{#if x}...{/if}` | `if x { ... }`（bodyの中） |
+| `{#each items as item}` | `ForEach(items, id: \.id) { item in ... }`（`Identifiable` なら `ForEach(items)`） |
+| `<slot/>` | `@ViewBuilder` のクロージャプロパティ |
+| `onMount(() => {})` | `.onAppear { }` |
+| `onDestroy` | `.onDisappear { }` |
+| `import Foo from './Foo.svelte'` | **不要**（同じアプリ内の `.swift` は自動で見える） |
+| `import { x } from 'pkg'` | `import Framework`（SwiftUIなど） |
+| TSの `interface` | `struct`（データの形） |
+| TSの `type A = B \| C` | `enum`（選択肢のどれか1つ） |
+| `async/await` | `async/await`（ほぼ同じ） |
+| `?.` / `??` | `?.`（Optional chaining）も `??`（nilのときの代わり）もある |
+| `null` / `undefined` | `nil`（1種類だけ） |
+
+> `id:` は、Svelte の `{#each items as item (item)}` の `(item)` と同じ役割（要素を識別するキー）。`CartLine` のように `id` を持つ型なら `id: \.id`、`String` の配列なら `id: \.self` を使う。他言語との対応は `05_他言語から見たSwift.md` §21。
+
+---
+
+### 例① UI部品（.svelte 相当）
+**Svelte**
+```svelte
+<script lang="ts">
+  let { label } = $props();
+  let count = $state(0);
+</script>
+
+<button onclick={() => count++}>{label}: {count}</button>
+```
+
+**SwiftUI**
+```swift
+import SwiftUI
+
+struct CounterButton: View {
+    let label: String                  // $props() 相当（外から渡す）
+    @State var count = 0               // $state 相当（画面が持つ状態）
+
+    var body: some View {              // ← ここがマークアップ
+        Button("\(label): \(count)") { // ← onclick 相当
+            count += 1
+        }
+    }
+}
+```
+
+### 例② 処理（.ts 相当）
+**Svelte/TS**
+```ts
+export function total(items: { price: number }[]): number {
+  return items.reduce((s, i) => s + i.price, 0);
+}
+```
+
+**Swift**
+```swift
+func total(_ items: [Product]) -> Int {
+    var sum = 0
+    for p in items { sum += p.priceJpy }
+    return sum
+}
+```
+- `Product` の正は `base/Types.swift`。ここでは `priceJpy` を持つ型として読む
+- 実際の合計は `base/3_標準ロジック.md` §1 の `totals()` を使う（自分で作り直さない）
+
+### 例③ 組み合わせ（部品をつなぐ）
+```swift
+struct RegisterView: View {
+    var body: some View {
+        VStack {
+            CounterButton(label: "個数")
+            Text("合計 ¥\(total(products))")
+        }
+    }
+}
+```
+
+### 例④ 状態と派生値
+**Svelte**
+```svelte
+<script>
+  let qty = $state(1);
+  let price = 300;
+  let subtotal = $derived(qty * price);
+</script>
+```
+
+**SwiftUI**
+```swift
+struct Line: View {
+    @State var qty = 1                        // $state 相当
+    let price = 300
+    var subtotal: Int { qty * price }   // $derived 相当（計算プロパティ）
+    var body: some View { Text("¥\(subtotal)") }
+}
+```
+
+### 例⑤ 配列を並べる・条件分岐
+```swift
+// {#each cart as line} 相当
+ForEach(cart, id: \.id) { line in
+    Text(line.name)
+}
+
+// {#if cart.isEmpty} 相当
+if cart.isEmpty {
+    Text("カートは空です")
+} else {
+    Text("合計 ¥\(total(cart))")
+}
+```
+
+---
+
+### Playgrounds と Xcode
+- **Playgrounds**（今やってるやつ）… 1ファイルに全部書いて練習。関数もUIも試せる
+- **Xcode**（Macが来たら）… 同じことを**複数の `.swift` ファイル**に分けるプロジェクト
+  - 例: `RegisterView.swift`（UI）／`Cart.swift`（処理）／`Product.swift`（データの形）
+  - 分け方は自由。**Svelteみたいに「これがUIファイル」と決まっているわけではない**
+
+### ハマりやすい違い（JS脳の注意）
+- View は **`class` ではなく `struct`**（値のコピーで動く。`this` が無い）
+- Svelteみたいな**自動リアクティブは無い**。状態は `@State` など**印を付けたものだけ**が更新の対象
+- **自分のファイルは import 不要**（同じアプリ内は名前だけで見える）。フレームワークだけ `import SwiftUI`
+- 小文字スタートの名前（`let name`）は普通、画面に自動では出ない（`Text(name)` と書く）
+- 文字に値を埋め込むのは `"\(count)"`（Svelteの `{count}` 相当）
+
+## 第2部: JS / TS / C#から見るSwift
+
+### 1. 演算子の前後の空白
 ```swift
 let c1 = a + b   // OK
 let c2 = a+b     // OK
@@ -8,14 +169,14 @@ let c3 = a +b    // エラー
 ```
 両側に空白、または両側とも空白なし。C# / JS にはない規則。
 
-## 2. 条件式に括弧は不要。`{ }` は必須
+### 2. 条件式に括弧は不要。`{ }` は必須
 ```swift
 if x > 0 { print("正") }   // OK
 // if (x > 0) print("正")  // エラー（{ } を省略できない）
 ```
 C# は括弧が必須で `{ }` は省略可。Swiftは逆。
 
-### 条件は `,` で並べられる
+#### 条件は `,` で並べられる
 ```swift
 if x > 0, y > 0 { print("両方正") }
 if x > 0 && y > 0 { print("両方正") }   // 同じ意味
@@ -30,7 +191,7 @@ if a > 0 || b > 0, c > 0 { }   // (a > 0 || b > 0) かつ c > 0
 ```
 - `,` が `&&` と違う点は、要素に `let`（オプショナルバインディング）を書けること。§6 を参照
 
-## 3. 条件は Bool のみ（truthy / falsy がない）
+### 3. 条件は Bool のみ（truthy / falsy がない）
 ```swift
 let n = 1
 // if n { }        // エラー
@@ -38,7 +199,7 @@ if n != 0 { }      // OK
 ```
 C# と同じ。JS / TS とは違う。
 
-## 4. 型の暗黙変換がない
+### 4. 型の暗黙変換がない
 ```swift
 let a: Int = 3
 let b: Double = 1.5
@@ -47,7 +208,7 @@ let c = Double(a) + b     // OK
 ```
 C# は `int + double` が通る。Swiftは通らない。
 
-## 5. 型は名前の後ろに書く。引数名は呼び出し時に書く
+### 5. 型は名前の後ろに書く。引数名は呼び出し時に書く
 ```swift
 let price: Int = 300
 
@@ -60,7 +221,7 @@ add2(300, 30)                  // _ を付けた引数は名前を書かない
 - 1つの式だけの関数は `return` を省略できる
 - C# の `var` は型推論のみ。Swiftの `let` / `var` は「変更できるか」を表す（型推論は両方で効く）
 
-## 6. null がない。代わりにオプショナル
+### 6. null がない。代わりにオプショナル
 ```swift
 var s: Int? = nil     // Int? は Int とは別の型
 // let t: Int = s     // エラー
@@ -71,7 +232,7 @@ let x = s!                  // 強制取り出し。nil だと実行時にクラ
 - C# の `int?` に近いが、Swiftは参照型（class）も含めて、nil にしたい型にはすべて `?` が必要
 - C# の `!` はコンパイラ警告を消すだけ。Swiftの `!` は nil のときクラッシュする
 
-### `if let` と `,`（§2 の条件リスト）
+#### `if let` と `,`（§2 の条件リスト）
 ```swift
 if let i = idx, i > 0 { print(i) }                  // 取り出して、さらに条件
 if let i = idx, let j = jdx, i < j { print(i, j) }  // 取り出しを複数
@@ -81,7 +242,7 @@ if let i = idx, let j = jdx, i < j { print(i, j) }  // 取り出しを複数
 - 1つでも偽（または nil）なら `{ }` は実行されない
 - `if let` で取り出した変数は `{ }` の中だけで使える。外でも使う場合は `guard let`（§22）
 
-## 7. struct は値型。配列・文字列も値型
+### 7. struct は値型。配列・文字列も値型
 ```swift
 struct P { var n: Int }
 var a = P(n: 1)
@@ -98,7 +259,7 @@ print(xs.count)  // 3
 - C# の配列 / `List` は参照型で共有される。Swiftの配列は値型（必要に応じてコピーされる）
 - JS のオブジェクト / 配列は参照が共有される
 
-## 8. `let` は中身も変えられない（struct の場合）
+### 8. `let` は中身も変えられない（struct の場合）
 ```swift
 struct P { var n: Int }
 let p = P(n: 1)
@@ -106,7 +267,7 @@ let p = P(n: 1)
 ```
 JS の `const` は中身を変えられる。C# の `readonly` に近いが、Swiftはその変数全体が対象。
 
-## 9. 関数の引数は変更できない（`inout` で参照渡し可能）
+### 9. 関数の引数は変更できない（`inout` で参照渡し可能）
 ```swift
 // デフォルトでは引数は let 扱いで変更できない
 func f(_ x: Int) {
@@ -125,15 +286,15 @@ print(num)       // 11
 - C# の値型引数はデフォルトでコピーだが、変更したい場合は `ref` を使う。Swift もこれに近く、配列（値型）を関数内で `append` などで書き換えたい場合に `inout` が必須になる。
 - JS / TS の配列やオブジェクトは参照型なので、関数内での変更が自動的に呼び出し元に反映されるが、Swift の配列は値型のため、明示的に `inout` を使わないと反映されない。
 
-## 10. enum は「関連値」を持てる。switch は「パターンマッチング」
+### 10. enum は「関連値」を持てる。switch は「パターンマッチング」
 
-### enum は関連値（Associated Values）を持てる
+#### enum は関連値（Associated Values）を持てる
 C# や TS の enum は単なる数値の別名だが、Swift の enum はケースごとに「異なる型や複数の値」を保持できる（TS の判別共用体 / Union 型に近い）。
 
 ```swift
-struct Product { let name: String }
+struct Product: Equatable { let name: String }
 
-// カートの1行（形は 03_レッスン.md レッスン2 で決めたものと同じ）
+// カートの1行（形は base/Types.swift の CartLine と同じ）
 struct CartLine {
     let id: String
     let typeId: String?
@@ -163,12 +324,12 @@ func message(_ r: AddResult) -> String {
 - `switch` 文の中で `let p, let qty` のように書くことで、格納されている値を変数として取り出せる（これを「値の束縛 / バインディング」と呼ぶ）。
 - ラベル（`qty:`）は任意だが、意味を明確にしたい場合に付ける。`Product` のように型名だけで意味が明らかな場合は省略されることが多い。
 
-### Swift の switch は「パターンマッチング」
+#### Swift の switch は「パターンマッチング」
 C# や JS の `switch` は「値の一致を判定するだけ」だが、**Swift の `switch` は「データ構造を分解するパターンマッチング」** である。これが最大の違い。
 
 ```swift
-// ① 値の一致を判定
-case .added(Product(name: "りんご"), qty: 3):
+// ① 値の一致を判定（where 句で中身を見る）
+case .added(let p, let qty) where p.name == "りんご" && qty == 3:
 
 // ② 型の一致だけを判定（値は無視）
 case .added(_, _):
@@ -180,9 +341,11 @@ case .added(let p, let qty) where qty > 0:
 case .added(let p, let qty):
 ```
 
+> `case .added(Product(name: "りんご"), qty: 3):` のように書くこともできますが、`Product` が `Equatable` のときだけです。中身を条件で見るなら `where` のほうが分かりやすいです。
+
 これらはすべて「パターン」としての `case` の使い方であり、**`let` の有無で「値の一致」と「値の取り出し」を区別している**。
 
-#### なぜ `let` が必要なのか？
+##### なぜ `let` が必要なのか？
 もし `let` なしで `case .added(p, qty):` と書くと、それは「外で宣言した変数 `p` と `qty` の値と一致するか」を判定する意味になる。
 
 ```swift
@@ -197,7 +360,7 @@ case .added(p, qty):             // r.added の中身が、外の変数 p と qt
 
 つまり、**「外で宣言した変数に代入する」方式は、Swift の「パターンマッチングで値を取り出す」機能とは互換性がない**ため、`case` の中で `let` を使って「この case ブロック内だけで使える新しい変数を宣言する」方式になっている。
 
-#### `.` の正体：型名のショートカット
+##### `.` の正体：型名のショートカット
 `case .added(let p, let qty):` の `.` は「型名（`AddResult`）の省略」。
 
 ```swift
@@ -210,7 +373,7 @@ case .added(let p, let qty):
 
 この2つは完全に同じ意味。`.` は「型名は省略したけど、列挙型のケースを参照しています」という目印。
 
-#### パターンマッチングは switch 以外にも使える
+##### パターンマッチングは switch 以外にも使える
 この「パターンマッチング」機能は `switch` 文だけでなく、`if` 文や `guard` 文でも使える。
 
 ```swift
@@ -227,7 +390,7 @@ guard case .added(let p, let qty) = r else {
 
 つまり、**「パターンマッチング」は Swift の言語機能として一般的に使えるものであり、`switch` はその代表的な使い方の1つ**。
 
-### switch の基本ルール
+#### switch の基本ルール
 ```swift
 enum Color { case red, blue }
 let c = Color.red
@@ -239,9 +402,9 @@ case .blue: print("青")
 - 全ケースを書くか `default:` を付ける。C# の switch 文は網羅を要求しない
 - C# と同じく流れ落ちない。ただし `break` は不要（C# は必要）
 
-### switchで複数のケースに同じ処理を書く
+#### switchで複数のケースに同じ処理を書く
 
-#### `,` で並べる
+##### `,` で並べる
 ```swift
 enum Color { case red, blue, green, yellow }
 let c = Color.red
@@ -254,7 +417,7 @@ case .blue, .green:      // blue または green
 }
 ```
 
-#### 残りをまとめて `default`
+##### 残りをまとめて `default`
 ```swift
 switch c {
 case .red:
@@ -264,7 +427,7 @@ default:                 // red 以外すべて
 }
 ```
 
-#### Int の範囲も書ける
+##### Int の範囲も書ける
 ```swift
 let n = 5
 
@@ -280,7 +443,7 @@ default:
 - C# の `case A: case B:` と並べる書き方は、Swiftでは `case .a, .b:` と1行にする
 - 1つの `case` には、1つ以上の文が必要
 
-## 11. `++` / `--` がない
+### 11. `++` / `--` がない
 ```swift
 var i = 0
 i += 1       // OK
@@ -288,7 +451,7 @@ i += 1       // OK
 ```
 C# / JS にはある。
 
-## 12. 文字列は Int の添字で取り出せない
+### 12. 文字列は Int の添字で取り出せない
 ```swift
 let s = "abc"
 // s[0]                          // エラー（C# の s[0] は通る）
@@ -296,7 +459,7 @@ let first = s.first               // Optional("a")
 let second = s[s.index(s.startIndex, offsetBy: 1)]   // "b"
 ```
 
-## 13. 範囲外アクセス・オーバーフローはクラッシュする
+### 13. 範囲外アクセス・オーバーフローはクラッシュする
 ```swift
 let arr = [1, 2, 3]
 // arr[5]    // 実行時にクラッシュ
@@ -304,29 +467,30 @@ let arr = [1, 2, 3]
 - C# は `IndexOutOfRangeException` で、`try/catch` で受けられる。Swiftの配列の範囲外アクセスによるクラッシュは `do/catch` で受けられない
 - `Int` の上限超えも通常の算術演算ではクラッシュする。C# は通常の設定では整数演算が折り返す
 - JS は配列の範囲外アクセスで `undefined` になる
+- クラッシュする書き方の一覧と回避は `02_Optionalと安全.md`
 
-## 14. 文字列補間は `\( )`
+### 14. 文字列補間は `\( )`
 ```swift
 let name = "A"
 print("こんにちは \(name)")     // JS の `${name}` / C# の $"{name}" に相当
 ```
 
-## 15. 範囲
+### 15. 範囲
 ```swift
 for i in 0..<3 { print(i) }    // 0, 1, 2
 for i in 0...3 { print(i) }    // 0, 1, 2, 3
 ```
 `for (int i = 0; i < 3; i++)` 形式の `for` はない。
 
-## 16. 命名の慣習
+### 16. 命名の慣習
 - 型（struct / enum / class）は `UpperCamelCase`: `Product`
 - 変数・関数・プロパティは `lowerCamelCase`: `priceJpy`
 - C# はメソッドとプロパティが `UpperCamelCase`。Swiftは `lowerCamelCase`
 
-## 17. 行末の `;` は不要
+### 17. 行末の `;` は不要
 改行が文の区切り。1行に複数の文を書くときだけ `;` を使う。
 
-## 18. エラー処理は `throws` / `try` / `try?` / `try!`
+### 18. エラー処理は `throws` / `try` / `try?` / `try!`
 ```swift
 enum MyError: Error { case bad }
 
@@ -337,7 +501,7 @@ func g(_ x: Int) throws -> Int {
 ```
 - C# / JS は例外を `throw` するだけで、呼び出し側に `try` を書く義務はない。Swiftは `throws` 付きの関数を呼ぶ際、必ず `try`（または `try?` / `try!`）を明示する必要がある。
 
-### 通常の `try`（`do-catch` と組み合わせる）
+#### 通常の `try`（`do-catch` と組み合わせる）
 ```swift
 do {
     let r = try g(1)       // throws の関数を呼ぶときは try が必須
@@ -347,7 +511,7 @@ do {
 }
 ```
 
-### `try?`（エラー時に `nil` を返す）
+#### `try?`（エラー時に `nil` を返す）
 ```swift
 let r1 = try? g(1)   // Int? 型になる。成功時は 1、失敗時は nil
 let r2 = try? g(-1)  // nil になる（エラー内容は破棄される）
@@ -355,24 +519,25 @@ let r2 = try? g(-1)  // nil になる（エラー内容は破棄される）
 - C# / JS にはない構文。「成功した値」か「失敗して nil」の2択で扱いたい場合に便利。エラーの詳細が不要なときに `do-catch` を省略できる。
 - 戻り値の型は自動的に Optional（`Int?` など）になる。
 
-### `try!`（失敗時に強制クラッシュ）
+#### `try!`（失敗時に強制クラッシュ）
 ```swift
 let r3 = try! g(1)   // Int 型になる。成功時は 1
 // let r4 = try! g(-1) // 実行時にクラッシュする
 ```
 - 「この引数なら絶対にエラーにならない」と確信できる場合のみ使用する。C# で例外が来ないとわかっている場合に `catch` を書かないのと似ているが、Swiftでは万が一エラーになるとアプリが落ちるため注意が必要。
+- `try!` のようなクラッシュする書き方の一覧は `02_Optionalと安全.md`
 
-## 19. インスタンス生成に `new` は不要
+### 19. インスタンス生成に `new` は不要
 ```swift
 struct P { var n: Int }
 let a = P(n: 1)    // C# の new P(...) に相当
 ```
 
-## 20. クロージャの `$0` は JavaScript の `a => ...` の `a` に相当
+### 20. クロージャの `$0` は JavaScript の `a => ...` の `a` に相当
 
 クロージャは、関数に渡す処理を `{ }` で書いたもの。`map`・`filter`・`reduce` などで「渡された値をどう処理するか」を指定するときによく使う。
 
-### JavaScript / TypeScript と Swift の対応
+#### JavaScript / TypeScript と Swift の対応
 
 **JavaScript / TypeScript**
 ```javascript
@@ -394,132 +559,37 @@ nums.reduce(0) { $0 + $1 }          // 10
 nums.sorted { $0 > $1 }             // [4, 3, 2, 1]
 ```
 
-### `$0` は何を表すか
+- JSの `a => a * 2` の `a` を、Swiftでは引数名を省略して `$0` と書ける（`{ a in a * 2 }` と名前を付けてもよい）
+- `$1` は2番目の引数：`reduce` では現在の要素、`sorted` では比較相手
+- 同じクロージャの中で `$0` と `a in` を混ぜない
+- 短い処理は `$0`、長い・意味をはっきりさせたい処理は名前を付ける
 
-JavaScriptでは、クロージャに渡される値に自分で引数名を付ける。
+> `$0`・`$1`・`$2` の詳しい説明、`reduce`/`sorted` の動き、文字列の例、使い分けは
+> `01_Swiftの基礎.md` の「`$` って？」にまとめてある。
 
-```javascript
-nums.map(a => a * 2);
-```
-
-ここでの `a` は、`map` が順番に渡す各要素を受け取る引数。
-
-Swiftでは、引数名を省略して `$0` と書ける。
-
-```swift
-nums.map { $0 * 2 }
-```
-
-この2つは同じ意味。`$0` はクロージャに渡された**1番目の引数**を表す。
-
-引数名を明示して書くこともできる。
-
-```swift
-nums.map { a in a * 2 }
-```
-
-- `{ $0 * 2 }`：引数名を省略した書き方
-- `{ a in a * 2 }`：引数名を `a` と宣言した書き方
-
-同じクロージャの中では、`$0` による省略記法と `a in` のような引数宣言を混ぜない。
-
-### `$0`・`$1`・`$2` の意味
-
-| Swift | 意味 |
-| --- | --- |
-| `$0` | 1番目の引数 |
-| `$1` | 2番目の引数 |
-| `$2` | 3番目の引数 |
-
-番号は `0` から始まる。
-
-`map` と `filter` は、各要素を1つずつクロージャに渡すため、通常は `$0` を使う。
-
-```swift
-nums.map { $0 * 2 }           // 各要素を2倍にする
-nums.filter { $0 % 2 == 0 }   // 偶数だけ残す
-```
-
-`reduce` は、累計値と現在の要素という2つの引数を受け取る。
-
-```swift
-[1, 2, 3].reduce(0) { $0 + $1 } // 6
-```
-
-- `$0`：現在の累計値
-- `$1`：現在処理している要素
-
-計算は `0 + 1 → 1 + 2 → 3 + 3 → 6` と進む。
-
-`sorted` は、比較する2つの要素を受け取る。
-
-```swift
-nums.sorted { $0 > $1 } // [4, 3, 2, 1]
-```
-
-- `$0`：比較対象の1つ目
-- `$1`：比較対象の2つ目
-- `$0 > $1`：1つ目を2つ目より前に並べる条件
-
-### 文字列にも使える
-
-```swift
-let upper = "KH8"
-
-let letters = upper.filter { $0.isLetter }
-let letters2 = upper.filter { char in char.isLetter }
-```
-
-どちらも `"KH"` になる。
-
-`filter` は文字列の各文字を1つずつクロージャに渡すため、`$0` は `"K"`、`"H"`、`"8"` の順に各文字を表す。`upper` は文字列全体であり、`$0` とは別物。
-
-### 使い分け
-
-- 短い処理：`$0` を使うと簡潔
-- 長い処理や意味を明確にしたい処理：`item in` など、名前を付けると読みやすい
-
-**覚え方：** JavaScript の `a => ...` にある `a` を、Swiftでは短いクロージャなら `$0` と書ける。引数が2つなら `$0` と `$1` を使う。
-
-## 21. キーパス (`\.`) と `\.self`
+### 21. キーパス (`\.`) と `\.self`
 
 SwiftUI の `ForEach` などで見かける `\.` は「キーパス（Key Path）」と呼ばれる機能です。プロパティへの参照を型安全に渡す仕組みです。
 
-### `\.self` の意味
+#### `\.self` の意味
 `\.self` は「**その要素そのもの**」を指します。
 
-### 他言語・フレームワークとの対応
-Svelte や React をご存知であれば、以下の対応関係が最も理解の助けになります。
-
-| 言語・フレームワーク | 「要素そのもの」を識別子にする書き方 | 特定のプロパティを識別子にする書き方 |
+#### 他言語・フレームワークとの対応
+| 言語・フレームワーク | 「要素そのもの」 | 特定のプロパティ |
 | :--- | :--- | :--- |
 | **SwiftUI** | `id: \.self` | `id: \.id` |
 | **Svelte** | `{#each items as item (item)}` | `{#each items as item (item.id)}` |
 | **React** | `key={item}` | `key={item.id}` |
 
-#### 1. Svelte における `(item)`
-Svelte の `{#each items as item (item)}` のカッコ内 `(item)` は、「配列の要素そのものをユニークキーとして使う」ことを意味します。
-SwiftUI で `id: \.self` を指定するのは、Svelte で `(item)` と書くのと技術的に完全に同じ役割です。
+配列の要素が「追加・削除・並び替え」されたとき、フレームワークが「**どの要素が変わったか**」を特定して、画面の更新を最小限にするために使う。
 
-#### 2. React における `key={item}`
-React で配列をレンダリングする際、`key={item}` と書くと「要素そのものをキーとして使う」ことになります。
-SwiftUI の `id: \.self` は、React の `key={item}` と同じ意味です。
+- `String` / `Int` など基本の型は値そのものが一意なので `\.self`（要素そのもの）を使う
+- Svelte の `(item)` の詳しい話は `05_他言語から見たSwift.md`
+- React の `key={item}` は SwiftUI の `id: \.self` と同じ意味
 
-### なぜこれが必要なのか（識別子 / Key の役割）
-これらのフレームワークでこの指定が必要な理由は同一です。
+### 22. `guard`（早期脱出）
 
-配列の要素が「追加」「削除」「順序変更」されたとき、フレームワークが「**どの要素が変化したか**」を正確に特定し、画面（DOM または View グラフ）を最小限のコストで更新（差分検知）するために使用されます。
-
-*   **Svelte**: `(item.id)` で ID を指定して再描画コストを下げる
-*   **React**: `key={item.id}` で ID を指定して再描画コストを下げる
-*   **SwiftUI**: `id: \.id` で ID を指定して View の更新を最適化する
-
-要素が `String` や `Int` などの基本的な型（`Hashable` プロトコルに準拠）の場合、値そのものがユニークになるため、Svelte の `(item)`、React の `key={item}`、Swift の `\.self` を指定します。
-
-
-## 22. `guard`（早期脱出）
-
-### 基本
+#### 基本
 ```swift
 guard 条件 else {
     // 条件が false のときだけ実行される
@@ -533,7 +603,7 @@ guard 条件 else {
 - 使える文：`return` / `throw` / `fatalError()` など。`continue` / `break` はループ内のみ
 - JS / C# の `if (!cond) return;` による早期リターンに相当
 
-### `if let` との違い：変数の有効範囲
+#### `if let` との違い：変数の有効範囲
 ```swift
 // if let: { } の中だけ
 if let v = s {
@@ -547,8 +617,9 @@ print(v)           // OK
 ```
 - `if let` はネストが深くなりやすい
 - `guard let` は取り出した変数を後続の処理全体で使えるため、ネストが浅くなる
+- `if let` / `guard let` / `if var` / `while let` の比較は `02_Optionalと安全.md` §8
 
-### 例：複数条件
+#### 例：複数条件
 ```swift
 for id in targets {
     guard id > 0,
