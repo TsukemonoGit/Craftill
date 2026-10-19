@@ -57,6 +57,35 @@ struct Product: Codable, Equatable, Identifiable {
     func stockMode(in types: [ProductType]) -> StockMode {
         types.first { $0.typeId == typeId }?.stockMode ?? .none
     }
+
+    /// 属性の値（`attr1`〜`attr3`）を、**種類のラベルと同じ順**で並べる。
+    /// **`compactMap` しない。** 空（nil）を詰めると位置がずれる（A-14 と同じ理由）。
+    var attrs: [String?] { [attr1, attr2, attr3] }
+
+    /// 属性の表示文字列（A-1「画像がない商品は、商品名・属性の文字表示で代替する」）。
+    ///
+    /// - ラベルと値がそろっている → `"色:赤 模様:○"`
+    /// - **ラベルが無いのに値がある** → `nil`（CSV の取り込みで弾く違反。A-1）
+    /// - 値が無い属性は**出さない**
+    ///
+    /// **ラベルは左から詰める**（A-1）ので、`[attr1, attr2, attr3]` と
+    /// `[attrLabel1, attrLabel2, attrLabel3]` を同じ添字で見れば足りる。
+    func attrText(in types: [ProductType]) -> String? {
+        guard let t = types.first(where: { $0.typeId == typeId }) else { return nil }
+        let labels = [t.attrLabel1, t.attrLabel2, t.attrLabel3]
+        var parts: [String] = []
+        for i in 0..<3 {
+            switch (labels[i], attrs[i]) {
+            case let (.some(label), .some(value)):
+                parts.append("\(label):\(value)")
+            case (.none, .some):
+                return nil          // ラベルのない属性に値がある = 取り込みエラー
+            default:
+                continue            // どちらも無い（値だけ無い場合も含む）
+            }
+        }
+        return parts.joined(separator: " ")
+    }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -272,10 +301,11 @@ enum DayKey {
 /// | 野良のカート行 | `ADHOC-{連番:02}` | `ADHOC-01` | **カートに追加した瞬間**（A-19-10） |
 ///
 /// **`products.product_id` はここには無い。** 商品ID は販売前に確定している
-/// （**印刷済みQRラベル・原本画像のファイル名**）。上の原則の**例外**であり、
-/// **誰が採番するのかはまだ決まっていない**（Q22 ③、A-19-12）。
-/// アプリ側は**検証だけ**で、補正も採番もしない（A-1）。
-/// 検証は `13_商品マスタCSVを取り込む.md` が担当する。
+/// （**印刷済みQRラベル・原本画像のファイル名**）ので、上の原則の**例外**です。
+/// 採番は **A-18（Mac上のデータ作成ツール）**が行い、**アプリ本体には含めません**
+/// （A-16「アプリ本体には含めない」、A-19-12）。
+/// アプリ側は**検証だけ**で、補正も採番もしません（A-1）。
+/// 検証は `13_商品マスタCSVを取り込む.md` が担当します。
 struct IdSequencer {
     private var saleCounters: [String: Int] = [:]   // "20261013" → その日の次番
     private var movementSeq = 0
@@ -401,6 +431,13 @@ print("小計:", cart.map { $0.subtotalJpy })
 print("itemType:", cart.map { $0.itemType.rawValue })
 print("ST-001 の在庫扱い:", inventory[0].stockMode(in: types))
 print("ST-001 は在庫管理する:", inventory[0].managesStock(in: types))
+print("属性:", inventory[0].attrText(in: types) ?? "なし")
+print("attrs（位置を保つ）:", inventory[0].attrs.map { $0 ?? "-" })
+let bad32 = Product(id: "ST-099", typeId: "sticker", name: "ラベルなし属性",
+                    priceJpy: 300, priceSats: nil, stock: 1,
+                    attr1: "赤", attr2: nil, attr3: "まる", imageRef: nil,
+                    isPublic: true, updatedAt: nil)
+print("ラベルなし属性の値:", bad32.attrText(in: types) ?? "エラー")
 
 // 日時が ISO 8601 で出ること（A-19-5）
 struct Box: Codable { let at: Date }

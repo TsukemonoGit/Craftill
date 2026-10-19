@@ -893,6 +893,7 @@ A-19-4 は `sale_id` / `item_id` / `stock_movements.id` / `sync_log.id` を決�
 | 7 | `stock` が空の商品 | 在庫管理なし型は空欄。`counted` / `unique` は値を持つことが必須。CSV は手で編集できるため、取り込み時に検証する |
 | 8 | 種類定義CSVの種類変更 | 商品または販売記録が存在する種類の `id_prefix` / `id_digits` / `stock_mode` は変更しない（A-1 のとおり拒否する） |
 | 9 | 遷移の検証 | 画面遷移はロジック側の `move(...)` が判断し、**UI は `state` を直接書き換えない**。表に無い遷移は拒否する（A-4） |
+| 10 | 受取方法の決定（`resolveMethod`） | sats払いの前提は「sats単価のある行が1行以上」（A-4）。前提を満たさない `chooseSats` では `cash` に落とし、**`total_sats` が 0 の `lightning` / `mixed` を作らない** |
 
 ---
 

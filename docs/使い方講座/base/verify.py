@@ -192,6 +192,20 @@ PRELUDE = {
         # base/3 §1 合計の表示2行（totalLines）/ §2 販売記録（resolveMethod・paidIn）
         ("3_標準ロジック.md", [0, 1]),
     ],
+    "32_属性ラベルを取り出す": [
+        # 型（ProductType.attrLabel1〜3 / Product.attr1〜3 / attrs / attrText(in:)）だけで足りる
+        ("2_型定義.md", [0, 1]),
+    ],
+    "33_お釣りと確定ボタンを作る": [
+        ("2_型定義.md", [0, 1]),
+        ("3_標準ロジック.md", [0, 1]),          # §1 合計 / §2 buildSale（保存する値）
+        ("6_会計の状態機械.md", "all_but_last"),  # §1〜§7（§9 通しは除く）
+    ],
+    "34_併用合計の請求額を計算する": [
+        ("2_型定義.md", [0, 1]),
+        ("3_標準ロジック.md", [0, 1]),          # §1 表示2行 / §2 resolveMethod
+        ("6_会計の状態機械.md", "all_but_last"),  # §1〜§7（markSatsConfirmed / cashDueJpy）
+    ],
 }
 
 
