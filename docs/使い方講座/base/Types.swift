@@ -242,9 +242,13 @@ struct SyncLogEntry: Codable, Equatable, Identifiable {
 
 /// 端末のローカル日付で「YYYYMMDD」を作る。
 /// **日次集計の境界は UTC ではなくローカル日付**（A-19-5）。
+///
+/// **「日」は保存しない。** `Date`（タイムゾーン付きの時点）から**その場で導出する**。
+/// A-13 の `sales` に日付を写す列は無い（A-19-5）。
+/// だからエクスポートを受けた端末は、自分のタイムゾーンで集計し直せる。
 enum DayKey {
     static func string(from date: Date) -> String {
-        let c = Calendar.current
+        let c = Calendar.current        // 端末設定のタイムゾーン（A-19-5）
         return String(format: "%04d%02d%02d",
                       c.component(.year, from: date),
                       c.component(.month, from: date),
@@ -256,14 +260,22 @@ enum DayKey {
     }
 }
 
-/// ID を振ります。**販売確定時だけ**使います（記録しない中断では採番しない。A-19-4）。
+/// ID を振ります。**これらは販売の途中で生まれるもの**なので、
+/// **生まれた瞬間に**採番します（記録しない中断では採番しない。A-19-4）。
 ///
-/// | ID | 形式 | 例 |
-/// | --- | --- | --- |
-/// | `sales.sale_id` | `S-YYYYMMDD-NNN` | `S-20261013-001` |
-/// | `sale_items.item_id` | `{sale_id}-{n:02}` | `S-20261013-001-01` |
-/// | `stock_movements.id` | `M-{連番:06}` | `M-000001` |
-/// | `sync_log.id` | `L-{連番:06}` | `L-000001` |
+/// | ID | 形式 | 例 | 採番する瞬間 |
+/// | --- | --- | --- | --- |
+/// | `sales.sale_id` | `S-YYYYMMDD-NNN` | `S-20261013-001` | 販売を確定した時 |
+/// | `sale_items.item_id` | `{sale_id}-{n:02}` | `S-20261013-001-01` | 明細を作るとき |
+/// | `stock_movements.id` | `M-{連番:06}` | `M-000001` | 在庫を動かすとき |
+/// | `sync_log.id` | `L-{連番:06}` | `L-000001` | 送信するとき |
+/// | 野良のカート行 | `ADHOC-{連番:02}` | `ADHOC-01` | **カートに追加した瞬間**（A-19-10） |
+///
+/// **`products.product_id` はここには無い。** 商品ID は販売前に確定している
+/// （**印刷済みQRラベル・原本画像のファイル名**）。上の原則の**例外**であり、
+/// **誰が採番するのかはまだ決まっていない**（Q22 ③、A-19-12）。
+/// アプリ側は**検証だけ**で、補正も採番もしない（A-1）。
+/// 検証は `13_商品マスタCSVを取り込む.md` が担当する。
 struct IdSequencer {
     private var saleCounters: [String: Int] = [:]   // "20261013" → その日の次番
     private var movementSeq = 0
@@ -300,29 +312,6 @@ struct IdSequencer {
     mutating func nextAdhocID() -> String {
         adhocSeq += 1
         return "ADHOC-" + pad(adhocSeq, 2)
-    }
-
-    /// 商品ID の採番（A-18、A-19-4）。**CSV 取り込み時だけ**使う。
-    /// - 接頭辞と桁数は **種類定義**に従う（`idPrefix` / `idDigits`）
-    /// - **その種類の既存の最大番号の次**から連番（A-18）
-    /// - **欠番は再利用しない**。「今の最大 + 1」なので、抜けた番号はそのまま残る（A-18）
-    /// - **桁数を超える場合は `nil`**（採番しない・A-18）
-    mutating func nextProductID(type: ProductType, existing: [Product]) -> String? {
-        let maxNum = Self.maxProductNumber(prefix: type.idPrefix, in: existing)
-        let nextNum = maxNum + 1
-        guard String(nextNum).count <= type.idDigits else { return nil }
-        return "\(type.idPrefix)-\(pad(nextNum, type.idDigits))"
-    }
-
-    /// その接頭辞の**既存の最大番号**。該当なしなら 0（A-18）
-    static func maxProductNumber(prefix: String, in products: [Product]) -> Int {
-        var maxNum = 0
-        for p in products where p.id.hasPrefix(prefix + "-") {
-            let parts = p.id.split(separator: "-", omittingEmptySubsequences: true)
-            guard parts.count == 2, let n = Int(parts[1]) else { continue }
-            maxNum = max(maxNum, n)
-        }
-        return maxNum
     }
 
     /// 取り消しても番号は戻らない。再利用しない（A-19-4）

@@ -69,14 +69,14 @@ func isSoldOutPanel(_ p: Product, inventory: [Product]) -> Bool {
 `stock` を読むのは `addCheck` と `isSoldOut` の **2か所だけ**にしましょう。
 
 > **`isSoldOut` は `addCheck` の `soldOut` の別名ではありません**。
-> `addCheck` は「追加できるか」（3 penalized理由）、`isSoldOut` は「表示だけ」（真偽値）。
+> `addCheck` は「追加できるか」（3つの理由）、`isSoldOut` は「表示だけ」（真偽値）。
 > 役割が違うので2つの関数に分けています。
 
 ---
 
 ## わざと間違う: NET表示だけ見て、追加を許す
 
-逆に、**パネルは「追加済み」なのに、SOLD OUT の商品には「追加済み ALSOidasetasaily 显示」**ことがあります。
+逆に、**パネルは「追加済み」なのに、SOLD OUT の商品に「追加済み」と表示される**ことがあります。
 
 一点物型は「すでに入っているなら `duplicateUnique`」ですが、
 その商品の在庫が0（A-7 で調整した結果）なら `.soldOut` のほうが先に来ます。

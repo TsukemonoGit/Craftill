@@ -30,6 +30,19 @@ from typing import Optional
 
 BASE = Path(__file__).resolve().parent
 
+# 実行するタイムゾーン。**期待される出力は JST で書いたもの**（A-19-5 のローカル日付）。
+# 検証端末のタイムゾーンに左右されないよう、固定します。
+#   （1_700_000_000 = 2023-11-14 22:13 UTC。JST なら 2023-11-15、UTC なら 2023-11-14）
+TZ = "Asia/Tokyo"
+
+
+def swift_env() -> dict:
+    """swift を呼ぶときの環境変数。タイムゾーンを固定する。"""
+    import os
+    env = dict(os.environ)
+    env["TZ"] = TZ
+    return env
+
 # 自動検証の対象外（理由は NO_VERIFY）
 #   03_レッスン.md … レッスン1〜8 が1つのファイルに混在し、
 #                    Swift基本／SwiftUI／永続化で文法が違うため1本に連結できない
@@ -168,6 +181,12 @@ PRELUDE = {
         ("3_標準ロジック.md", [0, 2]),          # §1 合計 と §3 在庫検証
         ("6_会計の状態機械.md", "all_but_last"),
     ],
+    "24_IDを採番する": [
+        ("2_型定義.md", [0, 1]),
+        # base/3 §1 合計 / §2 販売記録（採番）／§3 在庫検証・減算 / §4 確定
+        #        （§5 以降は使わないので飛ばす）
+        ("3_標準ロジック.md", [0, 1, 2, 3]),
+    ],
 }
 
 
@@ -219,13 +238,13 @@ def typecheck_run(src: str, label: str):
         f = Path(d) / "Main.swift"
         f.write_text(src, encoding="utf-8")
         r = subprocess.run(["swiftc", "-typecheck", str(f)],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, env=swift_env())
         if r.returncode != 0:
             print(f"{RED}NG{OFF} {label}: 型チェックでエラー")
             print("\n".join(r.stderr.split("\n")[:20]))
             return None
         print(f"{GREEN}OK{OFF} {label}: 型チェック")
-        r2 = subprocess.run(["swift", str(f)], capture_output=True, text=True)
+        r2 = subprocess.run(["swift", str(f)], capture_output=True, text=True, env=swift_env())
         if r2.returncode != 0:
             print(f"{RED}NG{OFF} {label}: 実行でエラー")
             print("\n".join(r2.stderr.split("\n")[:20]))

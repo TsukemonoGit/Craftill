@@ -140,7 +140,7 @@ INSERT INTO sales (...) VALUES ('\(saleID)','completed','cash',
 **足し算は正しい**です。**設計が間違っています。**
 
 1. **`sales` を書く時点では `sale_items` がまだ入っていない**。
-   下のコードの順에서는 `sales` → `sale_items` なので、**結果は 0** になります
+   下のコードの順序では `sales` → `sale_items` なので、**結果は 0** になります
 2. **「円合計」と「現金分」は別**（A-6-1）。sats払いの併用では
    `cashForSats`（sats単価の無い行だけ）が必要です。**SQL では出し分けられない**
 3. **A-13 の `sales.total_jpy` は `sales` の値**。明細から逆算する設計にすると
