@@ -74,7 +74,7 @@ func isSoldOutPanel(_ p: Product, inventory: [Product]) -> Bool {
 
 ---
 
-## わざと間違う: NET表示だけ見て、追加を許す
+## わざと間違う: 表示だけ見て、追加を許す
 
 逆に、**パネルは「追加済み」なのに、SOLD OUT の商品に「追加済み」と表示される**ことがあります。
 

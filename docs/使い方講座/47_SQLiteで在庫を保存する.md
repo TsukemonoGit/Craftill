@@ -123,7 +123,7 @@ try db.run("UPDATE products SET stock = ? WHERE product_id = ?;",
 | 実行計画のキャッシュ | 値ごとに別 | **文が同じなら再利用される** |
 
 > **`SQLITE_TRANSIENT`** は「SQLite が文字列をコピーしてから free する」という意味の
-> おまじないです。`nil` を渡すと**バッファが先に freed** されて壊れます。
+> おまじないです。`nil` を渡すと**バッファが先に解放されて**壊れます。
 
 ---
 
@@ -501,7 +501,7 @@ swift DB.swift
 - **採番は `IdSequencer`**（A-19-4）。`M-{連番:06}`・明細は `{sale_id}-{n:02}`・`01` 始まり
 - **`ROLLBACK` しても番号は戻らない**。欠番は**正常**
 - **SQL に値を埋め込まない**。プレースホルダ + `sqlite3_bind_*`
-- **`SQLITE_TRANSIENT`** を渡す（バッファの寿命 foret）
+- **`SQLITE_TRANSIENT`** を渡す（バッファの寿命を sqlite に**任せる**）
 - **合計は `cart.totals()`**。SQL の `SUM` にしない（A-6-1、`cashForSats` が要る）
 - **`sales` を先に書く**。明細から逆算すると壊れたときに原因が追えない
 - **検証は `base/3`**。SQL で検証しない（1件でも不足なら**1行も書かない**）
