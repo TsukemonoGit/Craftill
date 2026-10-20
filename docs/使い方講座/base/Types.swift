@@ -1,6 +1,19 @@
 import Foundation
 
 // ════════════════════════════════════════════════════════════
+// 0. グループ（product_groups）— 販売元別の精算単位（A-1、A-8）
+// ════════════════════════════════════════════════════════════
+
+/// グループ。集計の第1軸（A-8）。
+/// `groupId` は変更不可、`label` は変更可（A-1）。
+struct ProductGroup: Codable, Equatable, Identifiable {
+    let groupId: String        // 例: "mono"。半角英数字とアンダースコア。不変
+    var label: String          // 表示名（例: "もの製品"）。変更可
+
+    var id: String { groupId }
+}
+
+// ════════════════════════════════════════════════════════════
 // 1. 種類（product_types）
 // ════════════════════════════════════════════════════════════
 
@@ -22,6 +35,7 @@ struct ProductType: Codable, Equatable, Identifiable {
     var attrLabel1: String? = nil    // 属性ラベル（最大3・左から詰める。仮置き Q20）
     var attrLabel2: String? = nil
     var attrLabel3: String? = nil
+    var groupId: String? = nil       // 所属グループ。nil = グループなし（A-1、A-13）
     var updatedAt: Date? = nil       // 更新ルールが無いので Optional（A-19-9）
 
     var id: String { typeId }
@@ -107,6 +121,7 @@ struct CartLine: Codable, Equatable, Identifiable {
     var unitPriceJpy: Int      // カートに入れた時点の円単価（= unit_price_jpy）
     var unitPriceSats: Int?    // カートに入れた時点のsats単価。nil = この行は現金で受け取る
     var qty: Int
+    var groupId: String?       // カートに入れた時点のグループID。登録商品は種類の groupId を複写、野良は入力値。nil = グループなし（A-1、A-13）
     let isAdhoc: Bool          // 野良かどうか
 
     var itemType: ItemType { isAdhoc ? .adhoc : .registered }
@@ -161,6 +176,7 @@ struct SaleItem: Codable, Equatable, Identifiable {
     let saleId: String
     var itemType: ItemType
     var typeId: String?        // registered のみ
+    var groupId: String?       // 販売時点のグループID。registered は種類の groupId を複写、adhoc は入力値。nil = グループなし（A-13）
     var productId: String?     // registered のみ
     var qty: Int
     var unitPriceJpy: Int      // 販売時点の円単価
@@ -170,7 +186,7 @@ struct SaleItem: Codable, Equatable, Identifiable {
     /// **A-13 の列名**に合わせる。`id` → `item_id`。
     enum CodingKeys: String, CodingKey {
         case id = "item_id"
-        case saleId, itemType, typeId, productId, qty
+        case saleId, itemType, typeId, groupId, productId, qty
         case unitPriceJpy, unitPriceSats, paidIn, nameSnapshot
     }
 }
@@ -224,6 +240,7 @@ struct Totals {
 // ════════════════════════════════════════════════════════════
 // 8. B へ送るスナップショット（A-14）— **Product とは別型**
 // ════════════════════════════════════════════════════════════
+// グループは送信しない（A-14）。groupId はこのセクションに含めない。
 
 struct SnapshotType: Codable, Equatable {
     let typeId: String
@@ -355,21 +372,24 @@ struct IdSequencer {
 // 補助（カートの行を作る／合計を引く）
 // ════════════════════════════════════════════════════════════
 
-/// 登録商品からカートの行を作る。商品名と価格を「その時点」で写す（A-13 の snapshot）。
+/// 登録商品からカートの行を作る。商品名・価格・グループを「その時点」で写す（A-13 の snapshot）。
+/// グループは種類（`ProductType.groupId`）から複写する（A-13）。
 extension CartLine {
-    init(product p: Product, qty: Int) {
+    init(product p: Product, qty: Int, in types: [ProductType]) {
+        let gid = types.first { $0.typeId == p.typeId }?.groupId
         self.init(id: p.id, typeId: p.typeId, name: p.name,
                   unitPriceJpy: p.priceJpy, unitPriceSats: p.priceSats,
-                  qty: qty, isAdhoc: false)
+                  qty: qty, groupId: gid, isAdhoc: false)
     }
 }
 
-/// 野良商品の行を作る（A-1）。種類を持たない。
+/// 野良商品の行を作る（A-1）。種類を持たない。グループは入力値（nil = グループなし）。
 extension CartLine {
-    static func adhoc(id: String, name: String, priceJpy: Int, priceSats: Int?, qty: Int) -> CartLine {
+    static func adhoc(id: String, name: String, priceJpy: Int, priceSats: Int?,
+                      groupId: String?, qty: Int) -> CartLine {
         CartLine(id: id, typeId: nil, name: name,
                  unitPriceJpy: priceJpy, unitPriceSats: priceSats,
-                 qty: qty, isAdhoc: true)
+                 qty: qty, groupId: groupId, isAdhoc: true)
     }
 }
 
@@ -406,11 +426,17 @@ let jsonDecoder: JSONDecoder = {
     return d
 }()
 
+let groups: [ProductGroup] = [
+    ProductGroup(groupId: "mono", label: "もの製品"),
+    ProductGroup(groupId: "rokuyo", label: "ロクヨウ"),
+]
 let types: [ProductType] = [
     ProductType(typeId: "sticker", name: "ステッカー", idPrefix: "ST", idDigits: 3,
-                stockMode: .counted, attrLabel1: "色", attrLabel2: "模様", attrLabel3: nil, updatedAt: nil),
+                stockMode: .counted, attrLabel1: "色", attrLabel2: "模様", attrLabel3: nil,
+                groupId: "mono", updatedAt: nil),
     ProductType(typeId: "keyholder", name: "キーホルダー", idPrefix: "KH", idDigits: 3,
-                stockMode: .unique, attrLabel1: "色", attrLabel2: "模様", attrLabel3: nil, updatedAt: nil),
+                stockMode: .unique, attrLabel1: "色", attrLabel2: "模様", attrLabel3: nil,
+                groupId: nil, updatedAt: nil),
 ]
 var inventory: [Product] = [
     Product(id: "ST-001", typeId: "sticker", name: "ステッカー まる", priceJpy: 300, priceSats: 500,
@@ -421,14 +447,19 @@ var inventory: [Product] = [
             isPublic: true, updatedAt: nil),
 ]
 let cart: [CartLine] = [
-    CartLine(product: inventory[0], qty: 2),
-    CartLine(product: inventory[1], qty: 1),
-    CartLine.adhoc(id: "ADHOC-1", name: "野良（販売した本）", priceJpy: 500, priceSats: nil, qty: 1),
+    CartLine(product: inventory[0], qty: 2, in: types),
+    CartLine(product: inventory[1], qty: 1, in: types),
+    CartLine.adhoc(id: "ADHOC-1", name: "野良（販売した本）", priceJpy: 500, priceSats: nil,
+                   groupId: "rokuyo", qty: 1),
 ]
 
 print("合計:", cart.totals())
 print("小計:", cart.map { $0.subtotalJpy })
 print("itemType:", cart.map { $0.itemType.rawValue })
+print("groupId:", cart.map { $0.groupId ?? "なし" })
+print("グループ:", cart.map { line in
+    groups.first { $0.groupId == line.groupId }?.label ?? "グループなし"
+})
 print("ST-001 の在庫扱い:", inventory[0].stockMode(in: types))
 print("ST-001 は在庫管理する:", inventory[0].managesStock(in: types))
 print("属性:", inventory[0].attrText(in: types) ?? "なし")
