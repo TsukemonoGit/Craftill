@@ -36,6 +36,7 @@ struct ProductType: Codable, Equatable, Identifiable {
     var attrLabel2: String? = nil
     var attrLabel3: String? = nil
     var groupId: String? = nil       // 所属グループ。nil = グループなし（A-1、A-13）
+    var nextNo: Int = 1              // 次に採番する番号。高水位。減らさない（A-1、A-13）
     var updatedAt: Date? = nil       // 更新ルールが無いので Optional（A-19-9）
 
     var id: String { typeId }
@@ -54,7 +55,7 @@ struct Product: Codable, Equatable, Identifiable {
     var stock: Int?            // nil = 在庫管理なし型。counted/unique なら必ず値を持つ
 
     // ---- ここから先は「使いたいときだけ書く」 ----
-    // CSV取り込み・画像・公開状態に Needed ときだけ書く（A-1、A-13）
+    // CSV取り込み・画像・公開状態で必要なときだけ書く（A-1、A-13）
     var attr1: String? = nil
     var attr2: String? = nil
     var attr3: String? = nil
@@ -240,7 +241,7 @@ struct Totals {
 // ════════════════════════════════════════════════════════════
 // 8. B へ送るスナップショット（A-14）— **Product とは別型**
 // ════════════════════════════════════════════════════════════
-// グループは送信しない（A-14）。groupId はこのセクションに含めない。
+// グループは送信しない（A-14）。groupId・nextNo はこのセクションに含めない。
 
 struct SnapshotType: Codable, Equatable {
     let typeId: String
@@ -306,7 +307,7 @@ enum DayKey {
     }
 }
 
-/// ID を振ります。**これらは販売の途中で生まれるもの**なので、
+/// ID を振ります。**販売系のIDは販売の途中で生まれるもの**なので、
 /// **生まれた瞬間に**採番します（記録しない中断では採番しない。A-19-4）。
 ///
 /// | ID | 形式 | 例 | 採番する瞬間 |
@@ -317,12 +318,12 @@ enum DayKey {
 /// | `sync_log.id` | `L-{連番:06}` | `L-000001` | 送信するとき |
 /// | 野良のカート行 | `ADHOC-{連番:02}` | `ADHOC-01` | **カートに追加した瞬間**（A-19-10） |
 ///
-/// **`products.product_id` はここには無い。** 商品ID は販売前に確定している
-/// （**印刷済みQRラベル・原本画像のファイル名**）ので、上の原則の**例外**です。
-/// 採番は **A-18（Mac上のデータ作成ツール）**が行い、**アプリ本体には含めません**
-/// （A-16「アプリ本体には含めない」、A-19-12）。
-/// アプリ側は**検証だけ**で、補正も採番もしません（A-1）。
-/// 検証は `13_商品マスタCSVを取り込む.md` が担当します。
+/// **`products.product_id` は上の原則の例外。** 商品ID は販売前に確定している
+/// （**印刷済みQRラベル・原本画像のファイル名**）ため、販売確定時には採番しない。
+/// 採番はアプリ内で行う（A-1）。種類の `nextNo` から作り、
+/// 採番・商品のINSERT・`nextNo` の更新を同一トランザクションで行う。
+/// `nextNo` は減らさない（高水位）。欠番は再利用しない。
+/// CSV取り込みの検証は、編集画面と共有する（A-1、A-16）。
 struct IdSequencer {
     private var saleCounters: [String: Int] = [:]   // "20261013" → その日の次番
     private var movementSeq = 0
@@ -337,7 +338,7 @@ struct IdSequencer {
         return "S-\(day)-\(pad(n, 3))"
     }
 
-    /// 明細ID（1販売の中に连番。n は 1 始まり）
+    /// 明細ID（1販売の中の連番。n は 1 始まり）
     func itemID(saleId: String, n: Int) -> String {
         "\(saleId)-\(pad(n, 2))"
     }
@@ -355,10 +356,20 @@ struct IdSequencer {
     }
 
     /// 野良のカート行ID（A-19-10）。**野良をカートに追加した瞬間に**採番する。
-    /// 販売ID不像（A-19-4）、会計が完了するまでには存在しないため。
+    /// 販売ID（A-19-4）と異なり、会計の完了前に存在するため。
     mutating func nextAdhocID() -> String {
         adhocSeq += 1
         return "ADHOC-" + pad(adhocSeq, 2)
+    }
+
+    /// 商品IDを作る（A-1）。`nextNo` が `idDigits` の桁数を超える場合は nil（追加しない）。
+    /// **この関数は状態を変えない。** 呼び出し側が、成功時に `nextNo += 1` を
+    /// 商品のINSERTと同じトランザクションで行う。
+    func makeProductID(for type: ProductType) -> String? {
+        guard type.nextNo >= 1 else { return nil }
+        let digits = String(type.nextNo)
+        guard digits.count <= type.idDigits else { return nil }
+        return "\(type.idPrefix)-" + pad(type.nextNo, type.idDigits)
     }
 
     /// 取り消しても番号は戻らない。再利用しない（A-19-4）
@@ -433,10 +444,10 @@ let groups: [ProductGroup] = [
 let types: [ProductType] = [
     ProductType(typeId: "sticker", name: "ステッカー", idPrefix: "ST", idDigits: 3,
                 stockMode: .counted, attrLabel1: "色", attrLabel2: "模様", attrLabel3: nil,
-                groupId: "mono", updatedAt: nil),
+                groupId: "mono", nextNo: 2, updatedAt: nil),
     ProductType(typeId: "keyholder", name: "キーホルダー", idPrefix: "KH", idDigits: 3,
                 stockMode: .unique, attrLabel1: "色", attrLabel2: "模様", attrLabel3: nil,
-                groupId: nil, updatedAt: nil),
+                groupId: nil, nextNo: 2, updatedAt: nil),
 ]
 var inventory: [Product] = [
     Product(id: "ST-001", typeId: "sticker", name: "ステッカー まる", priceJpy: 300, priceSats: 500,
@@ -490,3 +501,8 @@ print("movement_id:", ids.nextMovementID(), ids.nextMovementID())
 print("log_id:", ids.nextLogID())
 print("adhoc_id:", ids.nextAdhocID(), ids.nextAdhocID())
 print("同日判定:", DayKey.isSameDay(day1, day1), DayKey.isSameDay(day1, day2))
+
+// 商品IDの採番（A-1）。状態は変えない
+print("product_id:", ids.makeProductID(for: types[0]) ?? "エラー")                 // ST-002
+var full = types[0]; full.nextNo = 1000
+print("桁数超過:", ids.makeProductID(for: full) ?? "エラー（追加しない）")           // nil
