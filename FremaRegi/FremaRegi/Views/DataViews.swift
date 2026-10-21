@@ -267,7 +267,10 @@ struct SummaryView: View {
         .sheet(item: $refundTarget) { sale in
             PinSheet(mode: .verify(refundValue ? "返金記録" : "返金の取消し")) { pin in
                 store.lastMessage = store.setRefundedFlag(saleId: sale.id, value: refundValue, pin: pin)
-            } onCancel: {}
+                refundTarget = nil
+            } onCancel: {
+                refundTarget = nil
+            }
         }
     }
 
