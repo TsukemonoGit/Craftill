@@ -94,22 +94,22 @@ MacBook Neo内で完結する領域と、手動連携（WoS）、非同期連携
 
 ```mermaid
 flowchart TB
-    subgraph Neo[MacBook Neo (Offline First)]
-        App[レジアプリ]
-        DB[(SQLite\nnext_no管理)]
-        Cam[内蔵カメラ]
-        UI[タッチ-less UI]
-        File[画像リソース\n(ビルド時同梱)]
+    subgraph Neo["MacBook Neo (Offline First)"]
+        App["レジアプリ"]
+        DB[("SQLite<br/>next_no管理")]
+        Cam["内蔵カメラ"]
+        UI["タッチレス UI"]
+        File["画像リソース<br/>(ビルド時同梱)"]
     end
 
-    subgraph External[外部連携]
-        WoS[WoS App\n(自己管理型)]
-        CF[Cloudflare KV\n(公開用)]
-        DevMac[開発用Mac\n(画像ビルド)]
+    subgraph External["外部連携"]
+        WoS["WoS App<br/>(自己管理型)"]
+        CF["Cloudflare KV<br/>(公開用)"]
+        DevMac["開発用Mac<br/>(画像ビルド)"]
     end
 
-    User((店主))
-    Customer((客))
+    User(("店主"))
+    Customer(("客"))
 
     User -- "操作/QRスキャン" --> Neo
     Customer -- "現金/sats支払い" --> User
@@ -118,11 +118,11 @@ flowchart TB
     App -- "スキャン" --> Cam
     App -- "表示" --> UI
     
-    App -. "クリップボード\n(sats額)" .-> WoS
-    App -. "目視確認\n(Invoice/入金)" .-> WoS
+    App -. "クリップボード<br/>(sats額)" .-> WoS
+    App -. "目視確認<br/>(Invoice/入金)" .-> WoS
     
-    App -- "スナップショット送信\n(HTTPS/Secret)" --> CF
-    DevMac -- "画像デプロイ\n(手動)" --> CF
+    App -- "スナップショット送信<br/>(HTTPS/Secret)" --> CF
+    DevMac -- "画像デプロイ<br/>(手動)" --> CF
     
     DevMac -- "原本画像" --> File
 ```
