@@ -8,6 +8,13 @@ import UIKit
 typealias PlatformImage = UIImage
 #endif
 
+/// imageRef（解決済みの実体パス）から同梱画像を読み出す。
+/// 起動時・追加時の attachMissingImages で実体パスが記録されているため、
+/// contentsOfFile が主経路。旧データで名前のみ保存されていた場合の保険として named も試す。
+func loadProductImage(_ ref: String) -> PlatformImage? {
+    PlatformImage(contentsOfFile: ref) ?? PlatformImage(named: ref)
+}
+
 // ════════════════════════════════════════════════════════════
 // 準備モード（営業前）のメニュー（5_画面構成.md）
 //   商品 ○ / QRラベル ○ / 在庫 △ / データCSV ×→最小で実装 / 設定 △
@@ -90,7 +97,7 @@ struct ProductsAdminView: View {
                         // 画像 or 文字代替（A-1）
                         ZStack {
                             RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.12)).frame(width: 56, height: 56)
-                            if let ref = p.imageRef, let img = PlatformImage(named: ref) ?? PlatformImage(contentsOfFile: ref) {
+                            if let ref = p.imageRef, let img = loadProductImage(ref) {
                                 #if os(macOS)
                                 Image(nsImage: img).resizable().scaledToFit().frame(width: 52, height: 52)
                                 #else

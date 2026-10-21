@@ -26,6 +26,10 @@ targets:
     platform: iOS
     sources:
       - path: FremaRegi
+      # 商品ID同名の画像を同梱すると、起動時/追加時/取り込み時に imageRef へ自動対応付け（A-1・P2）
+      - path: images
+        buildPhase: resources
+        type: folder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.frema.regi
@@ -40,6 +44,10 @@ targets:
     platform: macOS
     sources:
       - path: FremaRegi
+      # iOS と同じく商品ID同名の画像を同梱（A-1・P2）
+      - path: images
+        buildPhase: resources
+        type: folder
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.frema.regi.macos

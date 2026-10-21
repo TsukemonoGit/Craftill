@@ -58,18 +58,26 @@ final class Persistence {
     // ── 商品画像の同梱解決（A-1・ビルド時バンドル or Documents/originals/ を商品IDで探す）──
 
     /// 商品IDに対応する同梱画像の実体パスを返す。
-    /// 探索順: メインバンドルの images/<id>.{png,jpg,jpeg} → データ目录 originals/<id>.{png,jpg,jpeg}
+    /// 探索順:
+    ///   1. メインバンドルの画像リソース（Xcode プロジェクトに同梱した <id>.png / jpg / jpeg）
+    ///      — named lookup を使うので、フォルダ参照でも扁平な Resources 配置でも見つかる
+    ///   2. Documents/originals/<id>.{png,jpg,jpeg}（運用中に差し替えた原本・A-1）
+    ///   3. バンドル内の images/ フォルダ配下（inDirectory 版）
     func resolveImageRef(for productID: String) -> String? {
         let exts = ["png", "jpg", "jpeg"]
-        #if os(iOS) || os(macOS)
+        // 1. バンドルの画像リソース名として解決（同梱画像の主な経路）
         for e in exts {
-            if let p = Bundle.main.path(forResource: productID, ofType: e, inDirectory: "images") { return p }
+            if let url = Bundle.main.url(forResource: productID, withExtension: e) { return url.path }
         }
-        #endif
+        // 2. データディレクトリの originals/（棚卸し時に後から置いた原本）
         let origDir = directory.appendingPathComponent("originals", isDirectory: true)
         for e in exts {
             let candidate = origDir.appendingPathComponent("\(productID).\(e)")
             if FileManager.default.fileExists(atPath: candidate.path) { return candidate.path }
+        }
+        // 3. バンドル内の images/ サブディレクトリ（folder reference として同梱した場合）
+        for e in exts {
+            if let p = Bundle.main.path(forResource: productID, ofType: e, inDirectory: "images") { return p }
         }
         return nil
     }

@@ -243,7 +243,7 @@ struct ProductTile: View {
     }
 
     private func loadImage(_ ref: String) -> PlatformImage? {
-        PlatformImage(named: ref) ?? PlatformImage(contentsOfFile: ref)
+        loadProductImage(ref)
     }
 }
 

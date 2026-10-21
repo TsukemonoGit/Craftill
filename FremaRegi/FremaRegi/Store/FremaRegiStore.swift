@@ -61,6 +61,14 @@ final class FremaRegiStore {
             sales = data.sales; items = data.items; movements = data.movements
             syncLog = data.syncLog; ids = data.ids
         }
+        // 同梱画像の対応付け（A-1・P2対策）: imageRef が nil の商品を商品IDで再スキャンし、
+        // バンドル／originals/ にある画像を実体パスとして紐づける。hasImage の導出も追随する。
+        if persistence.attachMissingImages(to: &inventory) > 0 {
+            let reg = RegistryData(groups: groups, types: types, inventory: inventory,
+                                   sales: sales, items: items, movements: movements,
+                                   syncLog: syncLog, ids: ids)
+            try? persistence.saveRegistry(reg)   // saveAll() は init 内では呼べないため直接保存
+        }
         if let saved = try? persistence.saleContextStore.load() {
             ctx = saved
         }
@@ -408,7 +416,14 @@ final class FremaRegiStore {
                                 ids: &ids, at: Date())
         switch r {
         case .success(let p):
-            saveAll(); return "追加: \(p.id)（画像なし。原本を originals/ に配置して再ビルド・A-1）"
+            // 同梱画像の対応付け（A-1・P2対策）: バンドル or originals/ を商品IDで探し、
+            // imageRef に実体パスを記録する。見つからなければ案内どおり原本配置＋再起動で解決される。
+            let attached = persistence.attachMissingImages(to: &inventory)
+            saveAll()
+            if attached > 0 || inventory.first(where: { $0.id == p.id })?.imageRef != nil {
+                return "追加: \(p.id)（同梱画像を自動対応付け・A-1）"
+            }
+            return "追加: \(p.id)（画像なし。原本をバンドル or originals/ に配置して再起動すると自動対応付け・A-1）"
         case .failure(let rs):
             return rs.joined(separator: "\n")
         }
@@ -502,6 +517,8 @@ final class FremaRegiStore {
         applyTypes(tParsed, types: &types, inventory: inventory)
         applyProductMaster(pParsed, inventory: &inventory, movements: &movements,
                            ids: &ids, types: &types, overwriteStock: overwriteStock, at: Date())
+        // 取り込みで imageRef が nil になった商品も、同梱画像を商品IDで自動対応付け（A-1・P2対策）
+        persistence.attachMissingImages(to: &inventory)
         outcome.summary = "グループ \(gParsed.count) / 種類 \(tParsed.count) / 商品 \(pParsed.count) を取り込み"
         saveAll()
         return outcome
