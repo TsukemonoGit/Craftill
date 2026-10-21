@@ -1,0 +1,63 @@
+# ════════════════════════════════════════════════════════════
+# FremaRegi — Xcode プロジェクト定義（XcodeGen 用）
+#   brew install xcodegen  →  xcodegen generate  →  FremaRegi.xcodeproj
+# iOS / iPadOS / macOS で同じコードを動かす（共有コード方式）。
+# ════════════════════════════════════════════════════════════
+
+name: FremaRegi
+options:
+  bundleIdPrefix: fm.frema
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: NO
+
+targets:
+  # ── iOS / iPadOS 版（Neo 横画面想定・P0/Q16）──
+  FremaRegiiOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: FremaRegi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.frema.regi
+        INFOPLIST_FILE: Support/Info.plist
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # カメラ（QR読取）と写真は使わない。NSCameraUsageDescription は Info.plist 側
+    dependencies: []
+
+  # ── macOS 版（開発中の自己テスト用。同じソース）──
+  FremaRegiMac:
+    type: application
+    platform: macOS
+    sources:
+      - path: FremaRegi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.frema.regi.macos
+        INFOPLIST_FILE: Support/Mac-Info.plist
+        ENABLE_APP_SANDBOX: YES
+        # AppKVConfig の URLSession 送信にはネットワーク-outentitlement が必要
+        CODE_SIGN_ENTITLEMENTS: Support/FremaRegi.entitlements
+
+schemes:
+  FremaRegiiOS:
+    build:
+      targets:
+        FremaRegiiOS: all
+    run:
+      config: Debug
+  FremaRegiMac:
+    build:
+      targets:
+        FremaRegiMac: all
+    run:
+      config: Debug

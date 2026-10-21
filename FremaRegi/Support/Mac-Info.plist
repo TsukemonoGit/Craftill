@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+Info.plist <key>CFBundleDevelopmentRegion</key>
+Info.plist <string>ja</string>
+Info.plist <key>CFBundleDisplayName</key>
+Info.plist <string>FremaRegi</string>
+Info.plist <key>CFBundleExecutable</key>
+Info.plist <string>$(EXECUTABLE_NAME)</string>
+Info.plist <key>CFBundleIdentifier</key>
+Info.plist <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+Info.plist <key>CFBundleInfoDictionaryVersion</key>
+Info.plist <string>6.0</string>
+Info.plist <key>CFBundleName</key>
+Info.plist <string>$(PRODUCT_NAME)</string>
+Info.plist <key>CFBundlePackageType</key>
+Info.plist <string>APPL</string>
+Info.plist <key>CFBundleShortVersionString</key>
+Info.plist <string>$(MARKETING_VERSION)</string>
+Info.plist <key>CFBundleVersion</key>
+Info.plist <string>$(CURRENT_PROJECT_VERSION)</string>
+Info.plist <key>LSMinimumSystemVersion</key>
+Info.plist <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+Info.plist <key>NSHumanReadableCopyright</key>
+Info.plist <string>Frema Market</string>
+Info.plist <key>NSMainNibFile</key>
+Info.plist <string></string>
+Info.plist <key>NSPrincipalClass</key>
+Info.plist <string>NSApplication</string>
+</dict>
+</plist>

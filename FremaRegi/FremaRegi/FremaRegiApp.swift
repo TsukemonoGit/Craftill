@@ -15,7 +15,14 @@ struct FremaRegiApp: App {
         WindowGroup {
             ContentView()
                 .environment(store)
-                .task { Connectivity.shared.startMonitoring() }   // A-10 のsats可否
+                .task {
+                    Connectivity.shared.startMonitoring()   // A-10 のsats可否
+                    // 通信の有無をストアへ写す（satsAvailable が追従する）
+                    while !Task.isCancelled {
+                        store.hasConnectivity = Connectivity.shared.available
+                        try? await Task.sleep(for: .seconds(1))
+                    }
+                }
         }
     }
 }
