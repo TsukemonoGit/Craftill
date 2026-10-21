@@ -324,7 +324,8 @@ enum DayKey {
 /// 採番・商品のINSERT・`nextNo` の更新を同一トランザクションで行う。
 /// `nextNo` は減らさない（高水位）。欠番は再利用しない。
 /// CSV取り込みの検証は、編集画面と共有する（A-1、A-16）。
-struct IdSequencer {
+/// 採番の状態も保存対象（Codable）。private のままデコード可能。
+struct IdSequencer: Codable, Equatable {
     private var saleCounters: [String: Int] = [:]   // "20261013" → その日の次番
     private var movementSeq = 0
     private var logSeq = 0

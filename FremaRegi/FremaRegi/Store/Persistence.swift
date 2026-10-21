@@ -47,7 +47,45 @@ final class Persistence {
     func loadRegistry() throws -> RegistryData? {
         let url = file("registry.json")
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try jsonDecoder.decode(RegistryData.self, from: Data(contentsOf: url))
+        var data = try Data(contentsOf: url)
+        // UTF-8 BOM 付きの復元ファイル（Windows や他アプリで生成されたバックアップ）にも対応（P1対策）
+        if data.starts(with: [0xEF, 0xBB, 0xBF]) {
+            data = data.dropFirst(3)
+        }
+        return try jsonDecoder.decode(RegistryData.self, from: data)
+    }
+
+    // ── 商品画像の同梱解決（A-1・ビルド時バンドル or Documents/originals/ を商品IDで探す）──
+
+    /// 商品IDに対応する同梱画像の実体パスを返す。
+    /// 探索順: メインバンドルの images/<id>.{png,jpg,jpeg} → データ目录 originals/<id>.{png,jpg,jpeg}
+    func resolveImageRef(for productID: String) -> String? {
+        let exts = ["png", "jpg", "jpeg"]
+        #if os(iOS) || os(macOS)
+        for e in exts {
+            if let p = Bundle.main.path(forResource: productID, ofType: e, inDirectory: "images") { return p }
+        }
+        #endif
+        let origDir = directory.appendingPathComponent("originals", isDirectory: true)
+        for e in exts {
+            let candidate = origDir.appendingPathComponent("\(productID).\(e)")
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate.path }
+        }
+        return nil
+    }
+
+    /// 未解決の imageRef を持つ商品について、同梱画像を再スキャンして対応付ける（起動時・追加後に呼ぶ）。
+    @discardableResult
+    func attachMissingImages(to inventory: inout [Product]) -> Int {
+        var attached = 0
+        for i in inventory.indices where inventory[i].imageRef == nil {
+            if let ref = resolveImageRef(for: inventory[i].id) {
+                inventory[i].imageRef = ref
+                attached += 1
+            }
+        }
+        if attached > 0 { lastSavedAt = Date() }   // 実体変更はないが、呼び出し側で saveAll される前提
+        return attached
     }
 
     // ── 会計コンテキスト（SaleContextStore は StateMachine.swift に定義済み・base/6 §8）──

@@ -97,9 +97,10 @@ final class FremaRegiStore {
         }
         let result = add(product: p, qty: qty, cart: &ctx.cart, inventory: inventory, types: types)
         switch result {
-        case .applied(let m), .needsConfirm:   // 追加は確認不要（A-3 の表）
+        case .applied(let m):                 // 追加は確認不要（A-3 の表）
             lastMessage = m
-            if case .needsConfirm = result { break }
+        case .needsConfirm(let d):            // 追加では発生しないが、網羅しておく
+            pendingDelete = d
         case .rejected(let e):
             lastMessage = e
             return
@@ -119,13 +120,24 @@ final class FremaRegiStore {
 
     /// QRスキャナーからの受け口（連続読み取りのクールダウンは ScannerView 側・A-2）
     func scanQR(_ payload: String) {
-        addRegistered(productId: IDNormalizer.fromQR(payload))
+        let pid = IDNormalizer.fromQR(payload)
+        guard inventory.contains(where: { $0.id == pid }) else {
+            // 存在しないIDは補正して再試行（A-2 の補正は手動入力だけでなく全経路共通）
+            enterID(pid)
+            return
+        }
+        addRegistered(productId: pid)
     }
 
     /// 野良商品をカートに追加（A-1）。金額の確認表示は AdhocSheet が行う。ここでは最終確定のみ受ける。
     func addAdhoc(name: String, priceJpy: Int, priceSats: Int?, groupId: String?, qty: Int) {
         guard priceJpy >= 1 else {
             lastMessage = "円価格は1以上の整数で入力してください"
+            return
+        }
+        // sats単価は未設定か1以上（0sats受け付け防止・登録商品と同じ検証・A-1）
+        guard priceSats == nil || (priceSats ?? 0) >= 1 else {
+            lastMessage = "sats単価は空欄か1以上で入力してください"
             return
         }
         let line = CartLine.adhoc(id: ids.nextAdhocID(),           // 追加した瞬間に採番（A-19-10）
@@ -208,6 +220,34 @@ final class FremaRegiStore {
                 lastMessage = "PINが違います（\(reason.title)）"
                 return
             }
+        }
+        // 「済」ボタンの承認（C-6 #23・#78）。ここで請求sats額を確定し、そのまま販売確定まで行う
+        if case .needsConfirm(let r, _) = m, r.title == tapDoneReason(in: ctx).title {
+            pendingMove = nil; pendingNext = nil
+            tapSatsDoneConfirmed()
+            return
+        }
+        // sats待ちの「中断」＝キャンセル扱い。記録も破棄もせず、カートはそのまま（A-19-8）
+        if case .needsConfirm(let r, _) = m, r.title == cancelReason(in: ctx).title {
+            pendingMove = nil; pendingNext = nil
+            lastMessage = r.message
+            saveAll()
+            return
+        }
+        // 会計中断の実処理（A-4、A-19-2）。sats未確認なら記録なし、sats確認済みならPIN必須で記録を残す
+        if case .needsPIN(_, .suspended)? = m {
+            let r = suspendSaleLogic(cart: ctx.cart, ids: &ids, correctPIN: correctPIN,
+                                     pin: pinInput ?? "", sales: &sales, items: &items,
+                                     chooseSats: ctx.method == .lightning || ctx.method == .mixed,
+                                     confirmedAt: ctx.satsConfirmedAt, now: Date())
+            switch r {
+            case .success(let recorded, _):
+                lastMessage = recorded == nil ? "中断しました（記録は残りません）" : "中断しました（sats確認済みの記録を残します）"
+            case .failure(let e):
+                lastMessage = e   // PIN違いでは中断しない（C-6 #67）
+            }
+            resetAfterSale(clearContext: true)
+            return
         }
         apply(m, to: &ctx)
         pendingMove = nil; pendingNext = nil
@@ -381,6 +421,18 @@ final class FremaRegiStore {
                                  attrs: attrs, isPublic: isPublic,
                                  correctPIN: correctPIN, pin: pin, inventory: &inventory, types: types)
         finishEdit(r); return messageOf(r)
+    }
+
+    /// 公開状態のみ切替（属性ラベルを消さずに・PIN必須）。swipeActions から呼ぶ。
+    func togglePublic(productId: String, pin: String) -> String {
+        guard canEdit else { return "会計中は公開状態を編集できません（A-1、C-6 #52）" }
+        guard pin == correctPIN else { return "PINが違います（商品編集はPIN必須・A-1）" }
+        guard let i = inventory.firstIndex(where: { $0.id == productId }) else {
+            return "商品が見つかりません: \(productId)"
+        }
+        inventory[i].isPublic.toggle()
+        saveAll()
+        return "\(productId) を\(!inventory[i].isPublic ? "非公開" : "公開")にしました"
     }
 
     func adjustStock(productId: String, newStock: Int, pin: String) -> String {

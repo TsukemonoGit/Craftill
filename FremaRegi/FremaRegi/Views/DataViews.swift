@@ -159,14 +159,19 @@ struct SummaryView: View {
     @Environment(FremaRegiStore.self) private var store
 
     @State private var day = Date()
-    @State private var from: Date? = nil
-    @State private var to: Date? = nil
+    // 期間の初期値は表示と実データの一致を担保するため nil にしない（P1「表示と違う期間を精算する」対策）
+    @State private var from: Date = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+    @State private var to: Date = Date()
     @State private var floatText = "0"
     @State private var actualText = "0"
     @State private var settlePin = ""
     @State private var settlement: String?
     @State private var voidTarget: Sale?
     @State private var voidPin = ""
+    // PIN必須の操作（取消・返金フラグ）は alert 内の SecretInput では正しく入力できないため PinSheet を使う
+    @State private var showVoidPin = false
+    @State private var refundTarget: Sale?
+    @State private var refundValue = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -181,8 +186,8 @@ struct SummaryView: View {
                     }
                     GroupBox("期間集計") {
                         VStack(alignment: .leading, spacing: 8) {
-                            DatePicker("開始", selection: $fromFallback, displayedComponents: .date)
-                            DatePicker("終了", selection: $toFallback, displayedComponents: .date)
+                            DatePicker("開始", selection: $from, displayedComponents: .date)
+                            DatePicker("終了", selection: $to, displayedComponents: .date)
                             summaryRows(store.periodSummary(from: from, to: to).total)
                         }.padding(10)
                     }
@@ -195,7 +200,7 @@ struct SummaryView: View {
                                 .foregroundStyle(r.difference == 0 ? Color.green : Color.red)
                         }.padding(10)
                     }
-                    GroupBox("精算CSV（PIN必須・A-8）") {
+                    GroupBox("精算CSV（PIN必須・A-8。期間は上の「期間集計」と同じ範囲）") {
                         VStack(alignment: .leading, spacing: 8) {
                             LabeledField(label: "PIN") { SecretInput(text: $settlePin).frame(maxWidth: 140) }
                             Button("生成") { settlement = store.settlementCSV(from: from, to: to, pin: settlePin) }
@@ -227,12 +232,12 @@ struct SummaryView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                             if sale.status == .completed {
                                 HStack(spacing: 10) {
-                                    Button("取消") { voidTarget = sale; voidPin = "" }
+                                    Button("取消") { voidTarget = sale; showVoidPin = true }
                                         .font(.caption)
-                                    Toggle("返金済み", isOn: Binding(
-                                        get: { sale.refunded },
-                                        set: { v in store.lastMessage = store.setRefundedFlag(saleId: sale.id, value: v, pin: "") }))
-                                        .font(.caption).toggleStyle(.button)
+                                    Button(sale.refunded ? "返金を取り消す" : "返金済みとして記録") {
+                                        refundTarget = sale; refundValue = !sale.refunded
+                                    }
+                                    .font(.caption)
                                 }
                             }
                         }
@@ -241,21 +246,30 @@ struct SummaryView: View {
             }
         }
         .navigationTitle("集計・精算")
-        .alert("販売を取消しますか？（在庫に戻り、記録が残ります・A-9）", isPresented: Binding(
-            get: { voidTarget != nil }, set: { if !$0 { voidTarget = nil } })) {
-            Button("取消を実行") {
-                if let s = voidTarget { store.lastMessage = store.voidSale(saleId: s.id, pin: voidPin) }
+        // 販売取消（PIN必須・A-9）。確認 → PinSheet の順で行う
+        .confirmationDialog("販売を取消しますか？（在庫に戻り、記録が残ります・A-9）",
+                            isPresented: $showVoidPin, titleVisibility: .visible) {
+            Button("次に進んでPINを入力") { voidPin = "" }   // 実際の入力は下の PinSheet で受ける
+            Button("やめる", role: .cancel) { voidTarget = nil }
+        }
+        .sheet(isPresented: Binding(
+            get: { voidTarget != nil && !showVoidPin }, set: { on in
+                if !on { voidTarget = nil; voidPin = "" }
+            })) {
+            PinSheet(mode: .verify("販売取消")) { pin in
+                if let s = voidTarget { store.lastMessage = store.voidSale(saleId: s.id, pin: pin) }
+                voidTarget = nil
+            } onCancel: {
                 voidTarget = nil
             }
-            Button("やめる", role: .cancel) { voidTarget = nil }
-        } message: { _ in
-            SecretInput(text: $voidPin)
+        }
+        // 返金フラグ（PIN必須・A-9）
+        .sheet(item: $refundTarget) { sale in
+            PinSheet(mode: .verify(refundValue ? "返金記録" : "返金の取消し")) { pin in
+                store.lastMessage = store.setRefundedFlag(saleId: sale.id, value: refundValue, pin: pin)
+            } onCancel: {}
         }
     }
-
-    private var fromFallback: Binding<Date> { Binding(get: { from ?? Calendar.current.date(byAdding: .day, value: -7, to: Date())! },
-                                                      set: { from = $0 }) }
-    private var toFallback: Binding<Date> { Binding(get: { to ?? Date() }, set: { to = $0 }) }
 
     @ViewBuilder private func summaryRows(_ s: Summary) -> some View {
         VStack(alignment: .leading, spacing: 4) {

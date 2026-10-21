@@ -24,7 +24,9 @@ enum IDNormalizer {
     static func resolveProductID(_ raw: String, types: [ProductType]) -> String? {
         let s = normalize(raw)
         guard !s.isEmpty else { return nil }
-        for t in types {
+        // 長い接頭辞から照合する（例: MKX と MK の両方がある場合、MKX-008 は MK に先奪されない・A-2）
+        let sorted = types.sorted { $0.idPrefix.count > $1.idPrefix.count }
+        for t in sorted {
             let head = t.idPrefix + "-"
             let body: String
             if s.hasPrefix(head) {
@@ -34,11 +36,12 @@ enum IDNormalizer {
             } else {
                 continue
             }
-            guard isAsciiDigits(body), !body.isEmpty else { return nil }
+            // この接頭辞で検証に失敗しても他種類の可能性があるので次へ進む（部分一致誤拒否の防止）
+            guard isAsciiDigits(body), !body.isEmpty else { continue }
             let n = Int(body) ?? 0
-            guard n >= 1 else { return nil }
+            guard n >= 1 else { continue }
             let digits = String(n)
-            guard digits.count <= t.idDigits else { return nil }   // 桁数超過はエラー（A-1）
+            guard digits.count <= t.idDigits else { continue }   // 桁数超過はこの種類では成立しない
             return head + String(repeating: "0", count: t.idDigits - digits.count) + digits
         }
         return nil

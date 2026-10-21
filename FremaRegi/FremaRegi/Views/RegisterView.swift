@@ -557,6 +557,13 @@ struct CameraQRPreview: UIViewRepresentable {
     final class PreviewUIView: UIView, AVCaptureMetadataOutputObjectsDelegate {
         var onCode: ((String) -> Void)?
         private let session = AVCaptureSession()
+        private var previewLayer: AVCaptureVideoPreviewLayer?
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            // プレビューレイヤーは親の bounds に常に追従させる（P2「カメラ映像が表示されない」対策）
+            previewLayer?.frame = bounds
+        }
 
         func start() {
             guard
@@ -570,7 +577,11 @@ struct CameraQRPreview: UIViewRepresentable {
             session.addOutput(output)
             output.setMetadataObjectsDelegate(self, queue: .main)
             output.metadataObjectTypes = [.qr, .ean13, .code128]
-            layer.insertSublayer(CaptureVideoLayer(session: session).layer, at: 0)
+            let pl = AVCaptureVideoPreviewLayer(session: session)
+            pl.videoGravity = .resizeAspectFill
+            pl.frame = bounds
+            layer.insertSublayer(pl, at: 0)
+            previewLayer = pl
             DispatchQueue.global(qos: .userInitiated).async { self.session.startRunning() }
         }
 
@@ -579,18 +590,6 @@ struct CameraQRPreview: UIViewRepresentable {
                 onCode?(s)
             }
         }
-    }
-
-    struct CaptureVideoLayer: UIViewRepresentable {
-        let session: AVCaptureSession
-        final class LayerView: UIView { override static var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self } }
-        var layer: AVCaptureVideoPreviewLayer {
-            let l = AVCaptureVideoPreviewLayer(session: session)
-            l.videoGravity = .resizeAspectFill
-            return l
-        }
-        func makeUIView(context: Context) -> LayerView { let v = LayerView(); (v.layer as? AVCaptureVideoPreviewLayer)?.session = session; return v }
-        func updateUIView(_ uiView: LayerView, context: Context) {}
     }
 }
 #endif

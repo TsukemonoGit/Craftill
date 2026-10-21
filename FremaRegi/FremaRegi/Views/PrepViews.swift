@@ -240,19 +240,25 @@ struct QRLabelView: View {
                 #endif
             }
             .padding(.horizontal)
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 14)], spacing: 14) {
-                    ForEach(targets) { p in
-                        VStack(spacing: 6) {
-                            QRCodeImage(text: p.id, size: 110)
-                                .frame(width: 110, height: 110)
-                                .padding(8)
-                                .background(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
-                            Text(p.id).font(.system(.caption, design: .monospaced))
+            // QRのないラベルを印刷しない（A-2・P1対策）：QR生成に失敗した商品は対象から除外する
+            if targetsWithQR.isEmpty {
+                ContentUnavailableCompat(title: "印刷できるラベルがありません",
+                                         description: "QRコードを生成できた商品がありません。商品IDを確認してください。")
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 14)], spacing: 14) {
+                        ForEach(targetsWithQR) { p in
+                            VStack(spacing: 6) {
+                                QRCodeImage(text: p.id, size: 110)
+                                    .frame(width: 110, height: 110)
+                                    .padding(8)
+                                    .background(RoundedRectangle(cornerRadius: 10).stroke(.quaternary))
+                                Text(p.id).font(.system(.caption, design: .monospaced))
+                            }
                         }
                     }
+                    .padding()
                 }
-                .padding()
             }
         }
         .navigationTitle("QRラベル生成")
@@ -263,9 +269,14 @@ struct QRLabelView: View {
         scopeAll ? store.inventory : store.inventory.filter { $0.typeId == typeId }
     }
 
+    /// QR生成に成功する商品のみを印刷対象にする（QRなしラベルの印刷防止）
+    private var targetsWithQR: [Product] {
+        targets.filter { QRCodeImage.canGenerate(text: $0.id) }
+    }
+
     #if os(iOS)
     private func printLabels() {
-        let vc = UIActivityViewController(activityItems: [targets.map(\.id).joined(separator: "\n")],
+        let vc = UIActivityViewController(activityItems: [targetsWithQR.map(\.id).joined(separator: "\n")],
                                           applicationActivities: nil)
         if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let root = scene.windows.first?.rootViewController {
@@ -294,8 +305,8 @@ struct QRCodeImage: View {
     }
 
     private func generate() -> PlatformImage? {
-        let data = text.data(using: .utf8)!
-        let f = CIFilter(name: "CIQRCodeGenerator")!
+        let data = text.data(using: .utf8) ?? Data()
+        guard let f = CIFilter(name: "CIQRCodeGenerator") else { return nil }
         f.setValue(data, forKey: "inputData")
         f.setValue("M", forKey: "inputCorrectionLevel")
         guard let out = f.outputImage else { return nil }
@@ -307,6 +318,36 @@ struct QRCodeImage: View {
         #else
         return UIImage(cgImage: cg)
         #endif
+    }
+
+    /// QR生成が可能かどうかを事前判定する（印刷対象の絞り込みに使用）
+    static func canGenerate(text: String) -> Bool {
+        let data = text.data(using: .utf8) ?? Data()
+        guard !data.isEmpty, let f = CIFilter(name: "CIQRCodeGenerator") else { return false }
+        f.setValue(data, forKey: "inputData")
+        f.setValue("M", forKey: "inputCorrectionLevel")
+        guard let out = f.outputImage else { return false }
+        return CIContext().createCGImage(out, from: out.extent) != nil
+    }
+}
+
+/// iOS15/macOS12 以降で使える「該当なし」表示の簡易版（ContentUnavailableView のフォールバック）
+@available(iOS 17.0, macOS 14.0, *)
+struct ContentUnavailableCompat: View {
+    let title: String
+    var description: String? = nil
+
+    var body: some View {
+        if #available(iOS 17.0, macOS 14.0, *) {
+            ContentUnavailableView(title, systemImage: "qrcode.viewfinder", description: Text(description ?? ""))
+        } else {
+            VStack(spacing: 6) {
+                Image(systemName: "qrcode.viewfinder").font(.largeTitle).foregroundStyle(.secondary)
+                Text(title).font(.headline)
+                if let description { Text(description).font(.callout).foregroundStyle(.secondary) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 }
 

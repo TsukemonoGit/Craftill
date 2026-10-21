@@ -1,3 +1,5 @@
+import Foundation
+
 /// 確認ダイアログに出すもの
 struct ConfirmReason: Equatable {
     let title: String

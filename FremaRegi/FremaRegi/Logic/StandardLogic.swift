@@ -1,3 +1,5 @@
+import Foundation
+
 // @section: totals
 /// 合計の表示2行（A-3）
 func totalLines(_ cart: [CartLine]) -> (satsLine: String, cashLine: String) {

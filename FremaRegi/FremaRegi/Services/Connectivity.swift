@@ -6,6 +6,10 @@ import Foundation
 // Network.framework でインターフェースの状態を見るだけ（パケットを送らない）。
 // ════════════════════════════════════════════════════════════
 
+#if canImport(Network)
+import Network
+#endif
+
 #if canImport(Observation)
 import Observation
 
