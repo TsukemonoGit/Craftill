@@ -56,7 +56,7 @@ func add(product p: Product, qty: Int, cart: inout [CartLine],
         cart[i].qty += qty                              // すでに入っている行へ加算
         return .applied("\(p.name) ×\(cart[i].qty)")
     }
-    cart.append(CartLine(product: p, qty: qty))
+    cart.append(CartLine(product: p, qty: qty, in: types))
     return .applied("\(p.name) を追加しました")
 }
 
@@ -175,6 +175,3 @@ func cancelDelete() -> String {
 }
 
 /// SwiftUI 側は `.alert` を受けて.then これを呼ぶ（`09` レッスン §4）
-
-
-
