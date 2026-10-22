@@ -159,12 +159,9 @@ func remove(at i: Int, cart: [CartLine]) -> CartEdit {
     let line = cart[i]
     return .needsConfirm(CartDelete(index: i, name: line.name, qty: line.qty))
 }
-```
 
-## 6. 確認の結果を反映する
 
-```swift
-/// ダイアログで「削除」を選んだとき
+
 func performDelete(_ d: CartDelete, cart: inout [CartLine]) -> String {
     guard cart.indices.contains(d.index) else { return "対象が消えていました" }
     cart.remove(at: d.index)
@@ -177,9 +174,6 @@ func cancelDelete() -> String {
 }
 
 /// SwiftUI 側は `.alert` を受けて.then これを呼ぶ（`09` レッスン §4）
-```
 
-> `performDelete` は `CartDelete` に** 入っていた `name` / `qty`** を使います。
-> ダイアログを出してから確認している間に cart が変わった場合に、
-> 表示と実際の対象が食い違わないためです。
+
 
