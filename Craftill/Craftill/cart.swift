@@ -1,3 +1,4 @@
+import Foundation
 
 /// 商品をカートに追加できるかの判定結果
 enum AddCheck: Equatable {
