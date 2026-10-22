@@ -906,7 +906,12 @@ final class AppViewModel: ObservableObject {
             for (name, data) in jsonFiles {
                 try data.write(to: folder.appendingPathComponent(name), options: .atomic)
             }
-            message = "書き出しました: \(folder.lastPathComponent)（\(files.count + jsonFiles.count)ファイル）"
+            CSVExportPanel.finish(folder: folder)
+            if CSVExportPanel.usesShareSheet {
+                message = "共有シートを開きました（\(files.count + jsonFiles.count)ファイル）"
+            } else {
+                message = "書き出しました: \(folder.lastPathComponent)（\(files.count + jsonFiles.count)ファイル）"
+            }
         } catch {
             message = "書き出しに失敗しました: \(error.localizedDescription)"
         }
@@ -916,7 +921,9 @@ final class AppViewModel: ObservableObject {
     func exportPriceList() {
         let csv = CSVExport.priceListCSV(inventory)
         if let url = CSVExportPanel.save(csv, suggestedName: "price_list.csv") {
-            message = "保存しました: \(url.lastPathComponent)"
+            message = CSVExportPanel.usesShareSheet
+                ? "共有シートを開きました"
+                : "保存しました: \(url.lastPathComponent)"
         } else {
             message = "保存をキャンセルしました"
         }
@@ -943,7 +950,12 @@ final class AppViewModel: ObservableObject {
             try encoder.encode(groups).write(to: folder.appendingPathComponent("product_groups.json"), options: .atomic)
             try encoder.encode(types).write(to: folder.appendingPathComponent("product_types.json"), options: .atomic)
             try encoder.encode(inventory).write(to: folder.appendingPathComponent("products.json"), options: .atomic)
-            message = "マスタを書き出しました: \(folder.lastPathComponent)"
+            CSVExportPanel.finish(folder: folder)
+            if CSVExportPanel.usesShareSheet {
+                message = "共有シートを開きました"
+            } else {
+                message = "マスタを書き出しました: \(folder.lastPathComponent)"
+            }
         } catch {
             message = "書き出しに失敗しました: \(error.localizedDescription)"
         }
@@ -953,7 +965,9 @@ final class AppViewModel: ObservableObject {
     func exportSettlement(from: Date, to: Date) {
         let csv = CSVExport.settlementCSV(reportRows(from: from, to: to))
         if let url = CSVExportPanel.save(csv, suggestedName: "settlement.csv") {
-            message = "保存しました: \(url.lastPathComponent)"
+            message = CSVExportPanel.usesShareSheet
+                ? "共有シートを開きました"
+                : "保存しました: \(url.lastPathComponent)"
         }
     }
 

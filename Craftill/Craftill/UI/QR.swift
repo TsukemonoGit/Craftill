@@ -4,23 +4,43 @@ import CoreImage.CIFilterBuiltins
 import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
 #endif
 
 // ════════════════════════════════════════════════════════════
 // 商品IDのQR（P1-2）
 // QRの中身は商品IDの文字列そのもの（例: KH-008）
+// macOS / iPadOS の両方でビルドできるよう、画像型はCGImageで扱う。
 // ════════════════════════════════════════════════════════════
 
 enum QRCode {
-    static func image(for text: String, scale: CGFloat = 10) -> NSImage? {
+    static func cgImage(for text: String, scale: CGFloat = 10) -> CGImage? {
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(text.utf8)
         filter.correctionLevel = "M"
         guard let base = filter.outputImage else { return nil }
         let output = base.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        let context = CIContext()
-        guard let cg = context.createCGImage(output, from: output.extent) else { return nil }
-        return NSImage(cgImage: cg, size: NSSize(width: output.extent.width, height: output.extent.height))
+        return CIContext().createCGImage(output, from: output.extent)
+    }
+}
+
+struct QRImageView: View {
+    let cgImage: CGImage
+
+    var body: some View {
+        #if canImport(AppKit)
+        Image(nsImage: NSImage(cgImage: cgImage,
+                               size: NSSize(width: cgImage.width, height: cgImage.height)))
+            .interpolation(.none)
+            .resizable()
+            .scaledToFit()
+        #elseif canImport(UIKit)
+        Image(uiImage: UIImage(cgImage: cgImage))
+            .interpolation(.none)
+            .resizable()
+            .scaledToFit()
+        #endif
     }
 }
 
@@ -48,8 +68,13 @@ struct QRLabelView: View {
                     .frame(maxWidth: 240)
                     .disabled(scopeAll)
                     Spacer(minLength: 8)
+                    #if canImport(AppKit)
                     Button("PNGで保存") { savePNG() }.buttonStyle(.app)
                     Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
+                    #elseif canImport(UIKit)
+                    Button("共有") { sharePNG() }.buttonStyle(.app)
+                    Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
+                    #endif
                 }
                 Text("QRの中身＝商品ID。ID文字も併記しています。印刷して各商品に貼ってください。")
                     .font(.caption).foregroundColor(.secondary)
@@ -65,14 +90,17 @@ struct QRLabelView: View {
         .onAppear { if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" } }
     }
 
-    @MainActor
-    private func savePNG() {
-        let content = QRGrid(products: targets, columns: 4)
+    private var renderContent: some View {
+        QRGrid(products: targets, columns: 4)
             .padding(24)
             .frame(width: 760)
             .background(Color.white)
+    }
 
-        let renderer = ImageRenderer(content: content)
+    #if canImport(AppKit)
+    @MainActor
+    private func savePNG() {
+        let renderer = ImageRenderer(content: renderContent)
         renderer.scale = 2
         guard let image = renderer.nsImage,
               let tiff = image.tiffRepresentation,
@@ -97,11 +125,7 @@ struct QRLabelView: View {
 
     @MainActor
     private func printLabels() {
-        let content = QRGrid(products: targets, columns: 4)
-            .padding(24)
-            .frame(width: 720)
-            .background(Color.white)
-
+        let content = renderContent.frame(width: 720)
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
         guard let image = renderer.nsImage else {
@@ -129,6 +153,72 @@ struct QRLabelView: View {
         op.showsPrintPanel = true
         op.run()
     }
+    #elseif canImport(UIKit)
+    @MainActor
+    private func sharePNG() {
+        let renderer = ImageRenderer(content: renderContent)
+        renderer.scale = 2
+        guard let image = renderer.uiImage, let data = image.pngData() else {
+            vm.message = "QR画像を作れませんでした"
+            return
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("qr-labels.png")
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            vm.message = "保存に失敗しました: \(error.localizedDescription)"
+            return
+        }
+        presentShareSheet(urls: [url])
+        vm.message = "共有シートから「ファイルに保存」を選べます"
+    }
+
+    @MainActor
+    private func printLabels() {
+        let content = renderContent.frame(width: 720)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 2
+        guard let image = renderer.uiImage else {
+            vm.message = "QR画像を作れませんでした"
+            return
+        }
+        let info = UIPrintInfo.printInfo()
+        info.outputType = .photo
+        info.jobName = "QRラベル"
+        let controller = UIPrintInteractionController.shared
+        controller.printInfo = info
+        controller.printingItem = image
+        if let root = topViewController() {
+            controller.present(from: root.view.bounds, in: root.view,
+                               animated: true, completionHandler: nil)
+        } else {
+            controller.present(animated: true, completionHandler: nil)
+        }
+    }
+
+    @MainActor
+    private func presentShareSheet(urls: [URL]) {
+        guard let root = topViewController() else { return }
+        let av = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+        if let pop = av.popoverPresentationController {
+            pop.sourceView = root.view
+            pop.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.midY,
+                                    width: 0, height: 0)
+            pop.permittedArrowDirections = []
+        }
+        root.present(av, animated: true)
+    }
+
+    @MainActor
+    private func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first(where: { $0.isKeyWindow })
+            ?? scenes.first?.windows.first
+        var vc = window?.rootViewController
+        while let presented = vc?.presentedViewController { vc = presented }
+        return vc
+    }
+    #endif
 }
 
 struct QRGrid: View {
@@ -164,11 +254,8 @@ private struct QRLabel: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            if let image = QRCode.image(for: product.id) {
-                Image(nsImage: image)
-                    .interpolation(.none)
-                    .resizable()
-                    .scaledToFit()
+            if let cgImage = QRCode.cgImage(for: product.id) {
+                QRImageView(cgImage: cgImage)
                     .frame(maxWidth: .infinity)
                     .aspectRatio(1, contentMode: .fit)
             } else {

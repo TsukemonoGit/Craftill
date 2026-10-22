@@ -2,6 +2,8 @@ import Foundation
 import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
 #endif
 
 // ════════════════════════════════════════════════════════════
@@ -121,6 +123,8 @@ enum CSVExport {
 
 #if canImport(AppKit)
 enum CSVExportPanel {
+    nonisolated static var usesShareSheet: Bool { false }
+
     @MainActor
     static func save(_ csv: String, suggestedName: String) -> URL? {
         let panel = NSSavePanel()
@@ -144,6 +148,69 @@ enum CSVExportPanel {
         panel.allowsMultipleSelection = false
         panel.prompt = "このフォルダへ書き出す"
         return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    @MainActor
+    static func finish(folder: URL) {}
+}
+#elseif canImport(UIKit)
+enum CSVExportPanel {
+    nonisolated static var usesShareSheet: Bool { true }
+
+    /// iPad / iPhone: 一時ファイルに書いて共有シートを開く（ファイルアプリへ保存可能）。
+    @MainActor
+    static func save(_ csv: String, suggestedName: String) -> URL? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(suggestedName)
+        do {
+            try Data(csv.utf8).write(to: url, options: .atomic)
+            share([url])
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+    /// 一括出力用の一時フォルダを返す。書き出し後に finish(folder:) を呼ぶ。
+    @MainActor
+    static func chooseDirectory() -> URL? {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("craftill-export-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        } catch {
+            return nil
+        }
+    }
+
+    @MainActor
+    static func finish(folder: URL) {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: folder,
+                                                                 includingPropertiesForKeys: nil)) ?? [folder]
+        share(urls)
+    }
+
+    @MainActor
+    private static func share(_ urls: [URL]) {
+        guard let root = topViewController() else { return }
+        let av = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+        if let pop = av.popoverPresentationController {
+            pop.sourceView = root.view
+            pop.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.midY,
+                                    width: 0, height: 0)
+            pop.permittedArrowDirections = []
+        }
+        root.present(av, animated: true)
+    }
+
+    @MainActor
+    private static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first(where: { $0.isKeyWindow })
+            ?? scenes.first?.windows.first
+        var vc = window?.rootViewController
+        while let presented = vc?.presentedViewController { vc = presented }
+        return vc
     }
 }
 #endif

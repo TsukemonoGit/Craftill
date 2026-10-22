@@ -1,9 +1,15 @@
 import SwiftUI
 import Combine
 import AVFoundation
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 // ════════════════════════════════════════════════════════════
 // 内蔵カメラでQRを読む（P1-4）。QRの中身は商品ID。
+// macOS / iPadOS の両方でビルドできるようプレビューを分岐。
 // ════════════════════════════════════════════════════════════
 
 final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsDelegate {
@@ -93,6 +99,7 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOu
     }
 }
 
+#if canImport(AppKit)
 struct CameraPreview: NSViewRepresentable {
     let session: AVCaptureSession
 
@@ -113,6 +120,28 @@ struct CameraPreview: NSViewRepresentable {
         }
     }
 }
+#elseif canImport(UIKit)
+struct CameraPreview: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .black
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.videoGravity = .resizeAspectFill
+        preview.frame = view.bounds
+        view.layer.addSublayer(preview)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        if let preview = uiView.layer.sublayers?
+            .compactMap({ $0 as? AVCaptureVideoPreviewLayer }).first {
+            preview.frame = uiView.bounds
+        }
+    }
+}
+#endif
 
 struct QRScannerSheet: View {
     @EnvironmentObject var vm: AppViewModel
