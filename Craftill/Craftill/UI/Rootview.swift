@@ -4,24 +4,27 @@ struct RootView: View {
     @StateObject private var vm = AppViewModel()
 
     var body: some View {
-        ZStack {
-            if vm.isUnlocked {
-                content
-            } else {
-                LockView()
+        GeometryReader { geo in
+            ZStack {
+                if vm.isUnlocked {
+                    content
+                } else {
+                    LockView()
+                }
+                if vm.isUnlocked, let d = vm.dialog {
+                    DialogOverlay(dialog: d)
+                }
+                if vm.isUnlocked, let p = vm.pinPrompt {
+                    PinOverlay(prompt: p)
+                }
             }
-            if vm.isUnlocked, let d = vm.dialog {
-                DialogOverlay(dialog: d)
-            }
-            if vm.isUnlocked, let p = vm.pinPrompt {
-                PinOverlay(prompt: p)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .environment(\.isCompactWidth, geo.size.width < 900)
+            .sheet(isPresented: $vm.showAdhoc) {
+                AdhocSheet().environmentObject(vm)
             }
         }
         .environmentObject(vm)
-        .sheet(isPresented: $vm.showAdhoc) {
-            AdhocSheet().environmentObject(vm)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder

@@ -5,6 +5,20 @@ import AppKit
 import UIKit
 #endif
 
+// MARK: - 画面幅
+
+private struct CompactWidthKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// ウィンドウ幅が狭いとき true。ラベルと値の横並びなどに使う。
+    var isCompactWidth: Bool {
+        get { self[CompactWidthKey.self] }
+        set { self[CompactWidthKey.self] = newValue }
+    }
+}
+
 // MARK: - 書式
 
 enum Fmt {
@@ -127,6 +141,81 @@ struct InfoBox: View {
             .padding(10)
             .background(RoundedRectangle(cornerRadius: 8).fill((tint ?? Color.gray).opacity(0.12)))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.5)))
+    }
+}
+
+/// ラベルと金額・数量を表示する枠。
+/// 横幅が狭い画面では「項目名」と「値」を横並びにして、縦の占有を抑える。
+struct AmountBox: View {
+    let label: String
+    let value: String
+    var size: CGFloat = 22
+    var tint: Color? = nil
+    var horizontal = false
+
+    var body: some View {
+        Group {
+            if horizontal {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(label)
+                        .font(.system(size: max(12, min(17, size * 0.58)), weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    Spacer(minLength: 8)
+                    Text(value)
+                        .font(.system(size: size, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 56)
+            } else {
+                VStack(spacing: 3) {
+                    Text(label)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Text(value)
+                        .font(.system(size: size, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, minHeight: 56)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 8).fill((tint ?? Color.gray).opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.5)))
+    }
+}
+
+/// 2列の管理画面を、狭いときは縦に積む。ScrollView の中でも高さが破綻しない。
+struct AdaptiveColumns<First: View, Second: View>: View {
+    @Environment(\.isCompactWidth) private var compact
+    var spacing: CGFloat = 16
+    private let first: First
+    private let second: Second
+
+    init(spacing: CGFloat = 16,
+         @ViewBuilder first: () -> First, @ViewBuilder second: () -> Second) {
+        self.spacing = spacing
+        self.first = first()
+        self.second = second()
+    }
+
+    var body: some View {
+        if compact {
+            VStack(alignment: .leading, spacing: spacing) {
+                first
+                second
+            }
+        } else {
+            HStack(alignment: .top, spacing: spacing) {
+                first.frame(maxWidth: .infinity)
+                second.frame(maxWidth: .infinity)
+            }
+        }
     }
 }
 
@@ -350,6 +439,7 @@ struct AdaptiveHStack<First: View, Second: View>: View {
 
 struct AdminShell<Content: View>: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     let title: String
     let content: Content
 
@@ -360,10 +450,10 @@ struct AdminShell<Content: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TopBar(title, state: vm.saleState.label) {
-                Button("メニューへ") { vm.exitAdmin() }
+            TopBar(title, state: compact ? nil : vm.saleState.label) {
+                Button(compact ? "メニュー" : "メニューへ") { vm.exitAdmin() }
                     .buttonStyle(.app)
-                    .frame(maxWidth: 140)
+                    .frame(maxWidth: compact ? 96 : 140)
             }
             ScrollView {
                 content
@@ -434,6 +524,7 @@ struct ProductTile: View {
 
 struct CartRowView: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     let index: Int
     let line: CartLine
 
@@ -442,43 +533,93 @@ struct CartRowView: View {
         return "\(Fmt.yen(line.unitPriceJpy))／\(s)"
     }
 
-    var body: some View {
-        let fixedQty = stockMode(of: line, in: vm.types) == .unique
-        let imageRef = line.isAdhoc ? nil : vm.inventory.first(where: { $0.id == line.id })?.imageRef
-        HStack(spacing: 8) {
-            ProductImageView(imageRef: imageRef, placeholder: line.isAdhoc ? "野良" : "画像")
-                .frame(minWidth: 36, idealWidth: 52, maxWidth: 52, minHeight: 36, idealHeight: 52, maxHeight: 52)
-                .cornerRadius(4)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(line.id).font(.caption).foregroundColor(.secondary).lineLimit(1)
-                    if line.isAdhoc {
-                        Text("野良")
-                            .font(.caption2)
-                            .padding(.horizontal, 4)
-                            .background(Color.orange.opacity(0.3))
-                            .cornerRadius(3)
-                    }
-                }
-                Text(line.name).font(.system(size: 13, weight: .bold)).lineLimit(1).minimumScaleFactor(0.7)
-                Text(priceText).font(.caption).lineLimit(1).minimumScaleFactor(0.7)
+    private var fixedQty: Bool {
+        stockMode(of: line, in: vm.types) == .unique
+    }
+
+    private var imageRef: String? {
+        line.isAdhoc ? nil : vm.inventory.first(where: { $0.id == line.id })?.imageRef
+    }
+
+    private var thumbnail: some View {
+        ProductImageView(imageRef: imageRef, placeholder: line.isAdhoc ? "野良" : "画像")
+            .frame(minWidth: 36, idealWidth: 52, maxWidth: 52, minHeight: 36, idealHeight: 52, maxHeight: 52)
+            .cornerRadius(4)
+    }
+
+    private var info: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(line.id).font(.caption).foregroundColor(.secondary).lineLimit(1)
                 if line.isAdhoc {
-                    Text("グループ: \(vm.groupLabel(line.groupId))").font(.caption2).foregroundColor(.secondary).lineLimit(1)
+                    Text("野良")
+                        .font(.caption2)
+                        .padding(.horizontal, 4)
+                        .background(Color.orange.opacity(0.3))
+                        .cornerRadius(3)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(line.name).font(.system(size: 13, weight: .bold)).lineLimit(1).minimumScaleFactor(0.7)
+            Text(priceText).font(.caption).lineLimit(1).minimumScaleFactor(0.7)
+            if line.isAdhoc {
+                Text("グループ: \(vm.groupLabel(line.groupId))").font(.caption2).foregroundColor(.secondary).lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var qtyButtons: some View {
+        HStack(spacing: 6) {
             Button("−") { vm.decreaseQty(index) }
-                .buttonStyle(.app).frame(minWidth: 32, maxWidth: 44).disabled(fixedQty)
+                .buttonStyle(.app)
+                .frame(minWidth: compact ? 42 : 32, maxWidth: compact ? 58 : 44)
+                .disabled(fixedQty)
             Text("\(line.qty)").frame(minWidth: 24)
             Button("＋") { vm.increaseQty(index) }
-                .buttonStyle(.app).frame(minWidth: 32, maxWidth: 44).disabled(fixedQty)
-            Text(Fmt.yen(line.subtotalJpy))
-                .font(.system(size: 13))
-                .frame(minWidth: 60, maxWidth: 90, alignment: .trailing)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Button("削除") { vm.removeLine(index) }
-                .buttonStyle(.app).frame(minWidth: 52, maxWidth: 70)
+                .buttonStyle(.app)
+                .frame(minWidth: compact ? 42 : 32, maxWidth: compact ? 58 : 44)
+                .disabled(fixedQty)
+        }
+    }
+
+    private var subtotal: some View {
+        Text(Fmt.yen(line.subtotalJpy))
+            .font(.system(size: 13))
+            .frame(minWidth: compact ? 74 : 60, maxWidth: compact ? 100 : 90, alignment: .trailing)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+    }
+
+    private var deleteButton: some View {
+        Button("削除") { vm.removeLine(index) }
+            .buttonStyle(.app)
+            .frame(minWidth: 52, maxWidth: compact ? 100 : 70)
+    }
+
+    var body: some View {
+        Group {
+            if compact {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 8) {
+                        thumbnail
+                        info
+                        subtotal
+                    }
+                    HStack(spacing: 8) {
+                        qtyButtons
+                        Spacer(minLength: 8)
+                        deleteButton
+                    }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    thumbnail
+                    info
+                    qtyButtons
+                    subtotal
+                    deleteButton
+                }
+            }
         }
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.4)))
@@ -489,6 +630,7 @@ struct CartRowView: View {
 
 struct DialogOverlay: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     let dialog: Dialog
 
     private var needsPin: Bool {
@@ -557,11 +699,20 @@ struct DialogOverlay: View {
                 if needsPin {
                     SecureField("PIN", text: $vm.dialogPin).textFieldStyle(.roundedBorder)
                 }
-                HStack(spacing: 10) {
-                    if !isMessage {
-                        Button("キャンセル") { vm.closeDialog() }.buttonStyle(.app)
+                if compact {
+                    VStack(spacing: 8) {
+                        if !isMessage {
+                            Button("キャンセル") { vm.closeDialog() }.buttonStyle(.app)
+                        }
+                        Button(okTitle) { vm.confirmDialog(dialog) }.buttonStyle(.appPrimary)
                     }
-                    Button(okTitle) { vm.confirmDialog(dialog) }.buttonStyle(.appPrimary)
+                } else {
+                    HStack(spacing: 10) {
+                        if !isMessage {
+                            Button("キャンセル") { vm.closeDialog() }.buttonStyle(.app)
+                        }
+                        Button(okTitle) { vm.confirmDialog(dialog) }.buttonStyle(.appPrimary)
+                    }
                 }
             }
             .padding(20)

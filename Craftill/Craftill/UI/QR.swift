@@ -46,6 +46,7 @@ struct QRImageView: View {
 
 struct QRLabelView: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     @State private var scopeAll = true
     @State private var typeId = ""
 
@@ -57,30 +58,53 @@ struct QRLabelView: View {
     var body: some View {
         AdminShell("QRラベル") {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Toggle("全商品", isOn: $scopeAll)
-                        .toggleStyle(.switch)
-                        .frame(maxWidth: 160, alignment: .leading)
-                    Picker("種類", selection: $typeId) {
-                        ForEach(vm.types) { t in Text(t.name).tag(t.typeId) }
+                if compact {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("全商品", isOn: $scopeAll)
+                            .toggleStyle(.switch)
+                        Picker("種類", selection: $typeId) {
+                            ForEach(vm.types) { t in Text(t.name).tag(t.typeId) }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity)
+                        .disabled(scopeAll)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 8)],
+                                  alignment: .leading, spacing: 8) {
+                            #if canImport(AppKit)
+                            Button("PNGで保存") { savePNG() }.buttonStyle(.app)
+                            Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
+                            #elseif canImport(UIKit)
+                            Button("共有") { sharePNG() }.buttonStyle(.app)
+                            Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
+                            #endif
+                        }
                     }
-                    .labelsHidden()
-                    .frame(maxWidth: 240)
-                    .disabled(scopeAll)
-                    Spacer(minLength: 8)
-                    #if canImport(AppKit)
-                    Button("PNGで保存") { savePNG() }.buttonStyle(.app)
-                    Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
-                    #elseif canImport(UIKit)
-                    Button("共有") { sharePNG() }.buttonStyle(.app)
-                    Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
-                    #endif
+                } else {
+                    HStack(spacing: 12) {
+                        Toggle("全商品", isOn: $scopeAll)
+                            .toggleStyle(.switch)
+                            .frame(maxWidth: 160, alignment: .leading)
+                        Picker("種類", selection: $typeId) {
+                            ForEach(vm.types) { t in Text(t.name).tag(t.typeId) }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 240)
+                        .disabled(scopeAll)
+                        Spacer(minLength: 8)
+                        #if canImport(AppKit)
+                        Button("PNGで保存") { savePNG() }.buttonStyle(.app)
+                        Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
+                        #elseif canImport(UIKit)
+                        Button("共有") { sharePNG() }.buttonStyle(.app)
+                        Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
+                        #endif
+                    }
                 }
                 Text("QRの中身＝商品ID。ID文字も併記しています。印刷して各商品に貼ってください。")
                     .font(.caption).foregroundColor(.secondary)
 
                 ScrollView {
-                    QRGrid(products: targets, columns: 4)
+                    QRGrid(products: targets, columns: compact ? 2 : 4)
                         .padding(8)
                 }
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))

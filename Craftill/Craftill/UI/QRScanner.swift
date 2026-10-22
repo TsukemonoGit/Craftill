@@ -179,7 +179,7 @@ struct QRScannerSheet: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 420, idealWidth: 640, maxWidth: .infinity,
+        .frame(minWidth: 300, idealWidth: 640, maxWidth: .infinity,
                minHeight: 320, idealHeight: 480, maxHeight: .infinity)
         .onAppear {
             scanner.onCode = { code in

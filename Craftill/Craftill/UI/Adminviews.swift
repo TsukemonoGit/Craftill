@@ -52,37 +52,40 @@ struct InitialLaunchView: View {
     var body: some View {
         VStack(spacing: 0) {
             TopBar("起動", state: "PIN未設定")
-            VStack(spacing: 14) {
-                InfoBox(text: "アプリ起動\nPINが未設定です", size: 22)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("PIN").font(.caption).foregroundColor(.secondary)
-                    SecureField("PIN", text: $pin1).textFieldStyle(.roundedBorder)
-                    Text("PIN（確認）").font(.caption).foregroundColor(.secondary)
-                    SecureField("PIN（確認）", text: $pin2).textFieldStyle(.roundedBorder)
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 14) {
+                    InfoBox(text: "アプリ起動\nPINが未設定です", size: 22)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("PIN").font(.caption).foregroundColor(.secondary)
+                        SecureField("PIN", text: $pin1).textFieldStyle(.roundedBorder)
+                        Text("PIN（確認）").font(.caption).foregroundColor(.secondary)
+                        SecureField("PIN（確認）", text: $pin2).textFieldStyle(.roundedBorder)
+                    }
+                    Button("PINを設定する") { vm.setPin(pin1, confirm: pin2) }
+                        .buttonStyle(.appPrimary)
+                        .frame(minHeight: 52)
+                        .disabled(pin1.isEmpty || pin2.isEmpty)
+                    Button("初期投入（グループ・種類・商品の登録）") { vm.go(.edit) }
+                        .buttonStyle(.app)
+                        .frame(minHeight: 52)
+                    Button("初期投入（CSV取り込み）") { vm.go(.csvImport) }
+                        .buttonStyle(.app)
+                        .frame(minHeight: 52)
+                    Button("販売取消・在庫調整・エクスポート・価格編集") {}
+                        .buttonStyle(.app)
+                        .disabled(true)
+                    Text("PIN設定前は初期投入のみ可。PIN必須の操作は不可。")
+                        .font(.caption).foregroundColor(.secondary)
+                    Panel(title: "起動時の状態復元") {
+                        Text("保存済みの会計状態がある場合、直前の状態（スキャン中・sats待ち・併用現金入力中を含む）へ復元。")
+                        Text("カメラ読み取りが再開できない場合は再起動を促す表示を出す。")
+                    }
                 }
-                Button("PINを設定する") { vm.setPin(pin1, confirm: pin2) }
-                    .buttonStyle(.appPrimary)
-                    .frame(minHeight: 52)
-                    .disabled(pin1.isEmpty || pin2.isEmpty)
-                Button("初期投入（グループ・種類・商品の登録）") { vm.go(.edit) }
-                    .buttonStyle(.app)
-                    .frame(minHeight: 52)
-                Button("初期投入（CSV取り込み）") { vm.go(.csvImport) }
-                    .buttonStyle(.app)
-                    .frame(minHeight: 52)
-                Button("販売取消・在庫調整・エクスポート・価格編集") {}
-                    .buttonStyle(.app)
-                    .disabled(true)
-                Text("PIN設定前は初期投入のみ可。PIN必須の操作は不可。")
-                    .font(.caption).foregroundColor(.secondary)
-                Panel(title: "起動時の状態復元") {
-                    Text("保存済みの会計状態がある場合、直前の状態（スキャン中・sats待ち・併用現金入力中を含む）へ復元。")
-                    Text("カメラ読み取りが再開できない場合は再起動を促す表示を出す。")
-                }
+                .frame(maxWidth: 680)
+                .padding(.horizontal, 16)
+                .padding(.top, 24)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: 680)
-            .padding(.top, 24)
-            Spacer()
             MessageBar()
         }
     }
@@ -127,7 +130,8 @@ struct MenuView: View {
         VStack(spacing: 0) {
             TopBar("機能メニュー", state: vm.saleState.label)
             ScrollView {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: 3), spacing: 16) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 16)],
+                          alignment: .leading, spacing: 16) {
                     ForEach(items) { item in
                         Button { item.action() } label: {
                             VStack(spacing: 6) {
@@ -182,32 +186,22 @@ struct EditView: View {
 
 struct GroupEditor: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     @State private var gid = ""
     @State private var label = ""
     @State private var editing = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        AdaptiveColumns(spacing: 16) {
             Panel(title: "グループ一覧") {
                 TableRowView(cells: ["グループID", "ラベル", "使用状況"], widths: [120, 180, 90], header: true)
                 ForEach(vm.groups) { g in
-                    HStack(spacing: 6) {
-                        TableRowView(cells: [g.groupId, g.label, vm.isGroupInUse(g.groupId) ? "使用中" : "未使用"],
-                                     widths: [120, 180, 90])
-                        Button("ラベル変更") {
-                            gid = g.groupId
-                            label = g.label
-                            editing = true
-                        }
-                        .buttonStyle(.app).frame(minWidth: 80, maxWidth: 120)
-                        Button("削除") { vm.deleteGroup(g.groupId) }
-                            .buttonStyle(.app).frame(minWidth: 60, maxWidth: 80)
-                            .disabled(vm.isGroupInUse(g.groupId))
-                    }
+                    groupRow(g)
                 }
                 Text("削除: 種類または販売明細から参照されている場合は不可。ラベル変更は過去の集計表示にも反映される。")
                     .font(.caption).foregroundColor(.secondary)
             }
+        } second: {
             Panel(title: editing ? "ラベル変更" : "グループを追加") {
                 LabeledField(label: "グループID（半角英数字・_。追加後変更不可）", text: $gid, required: true, disabled: editing)
                 LabeledField(label: "ラベル", text: $label, required: true)
@@ -217,8 +211,46 @@ struct GroupEditor: View {
                     Button("変更をやめる") { reset() }.buttonStyle(.app)
                 }
             }
-            .frame(maxWidth: 420)
+            .frame(maxWidth: compact ? .infinity : 420)
         }
+    }
+
+    @ViewBuilder
+    private func groupRow(_ g: ProductGroup) -> some View {
+        let table = TableRowView(cells: [g.groupId, g.label, vm.isGroupInUse(g.groupId) ? "使用中" : "未使用"],
+                                 widths: [120, 180, 90])
+        if compact {
+            VStack(alignment: .leading, spacing: 6) {
+                table
+                HStack(spacing: 6) {
+                    editButton(g)
+                    deleteButton(g)
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                table
+                editButton(g)
+                deleteButton(g)
+            }
+        }
+    }
+
+    private func editButton(_ g: ProductGroup) -> some View {
+        Button("ラベル変更") {
+            gid = g.groupId
+            label = g.label
+            editing = true
+        }
+        .buttonStyle(.app)
+        .frame(minWidth: 80, maxWidth: 120)
+    }
+
+    private func deleteButton(_ g: ProductGroup) -> some View {
+        Button("削除") { vm.deleteGroup(g.groupId) }
+            .buttonStyle(.app)
+            .frame(minWidth: 60, maxWidth: 80)
+            .disabled(vm.isGroupInUse(g.groupId))
     }
 
     private func save() {
@@ -237,6 +269,7 @@ struct GroupEditor: View {
 
 struct TypeEditor: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     @State private var typeId = ""
     @State private var name = ""
     @State private var prefix = ""
@@ -260,25 +293,22 @@ struct TypeEditor: View {
     private var locked: Bool { editingId.map { vm.isTypeLocked($0) } ?? false }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        AdaptiveColumns(spacing: 16) {
             Panel(title: "種類一覧") {
                 TableRowView(cells: ["種類ID", "表示名", "接頭辞", "桁", "在庫の扱い", "グループ", "next_no"],
                              widths: [90, 140, 60, 40, 110, 110, 70], header: true)
                 ForEach(vm.types) { t in
-                    HStack(spacing: 6) {
-                        TableRowView(cells: [t.typeId, t.name, t.idPrefix, "\(t.idDigits)", t.stockMode.label,
-                                             vm.groupLabel(t.groupId), "\(t.nextNo)"],
-                                     widths: [90, 140, 60, 40, 110, 110, 70])
-                        Button("編集") { load(t) }.buttonStyle(.app).frame(minWidth: 52, maxWidth: 80)
-                    }
+                    typeRow(t)
                 }
                 Text("編集可（既存）: 表示名・属性ラベル・グループ。種類ID・接頭辞・桁数・在庫の扱いは変更不可。next_no は減らさない。")
                     .font(.caption).foregroundColor(.secondary)
             }
+        } second: {
             Panel(title: editingId == nil ? "種類を追加" : "種類を編集") {
                 LabeledField(label: "種類ID（半角英数字・_）", text: $typeId, required: true, disabled: editingId != nil)
                 LabeledField(label: "表示名", text: $name, required: true)
-                HStack {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
+                          alignment: .leading, spacing: 8) {
                     LabeledField(label: "ID接頭辞（種類間で一意）", text: $prefix, required: true, disabled: editingId != nil)
                     LabeledField(label: "ID桁数", text: $digitsText, required: true, disabled: editingId != nil)
                 }
@@ -290,7 +320,8 @@ struct TypeEditor: View {
                     .labelsHidden()
                     .disabled(editingId != nil)
                 }
-                HStack {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 8)],
+                          alignment: .leading, spacing: 8) {
                     LabeledField(label: "属性ラベル1", text: $l1)
                     LabeledField(label: "属性ラベル2", text: $l2)
                     LabeledField(label: "属性ラベル3", text: $l3)
@@ -310,7 +341,28 @@ struct TypeEditor: View {
                     Button("編集をやめる") { reset() }.buttonStyle(.app)
                 }
             }
-            .frame(maxWidth: 480)
+            .frame(maxWidth: compact ? .infinity : 480)
+        }
+    }
+
+    @ViewBuilder
+    private func typeRow(_ t: ProductType) -> some View {
+        let table = TableRowView(cells: [t.typeId, t.name, t.idPrefix, "\(t.idDigits)", t.stockMode.label,
+                                         vm.groupLabel(t.groupId), "\(t.nextNo)"],
+                                 widths: [90, 140, 60, 40, 110, 110, 70])
+        let button = Button("編集") { load(t) }
+            .buttonStyle(.app)
+            .frame(minWidth: 52, maxWidth: 80)
+        if compact {
+            VStack(alignment: .leading, spacing: 6) {
+                table
+                button
+            }
+        } else {
+            HStack(spacing: 6) {
+                table
+                button
+            }
         }
     }
 
@@ -358,6 +410,7 @@ struct TypeEditor: View {
 
 struct ProductEditor: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     @State private var typeId = ""
     @State private var name = ""
     @State private var priceText = ""
@@ -398,9 +451,10 @@ struct ProductEditor: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        AdaptiveColumns(spacing: 16) {
             listPanel
-            formPanel.frame(maxWidth: 520)
+        } second: {
+            formPanel.frame(maxWidth: compact ? .infinity : 520)
         }
         .onAppear { if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" } }
         .sheet(isPresented: $showConfirm) {
@@ -420,15 +474,10 @@ struct ProductEditor: View {
             TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開"],
                          widths: [70, 130, 150, 60, 60, 50, 50], header: true)
             ForEach(vm.inventory) { p in
-                HStack(spacing: 6) {
-                    TableRowView(cells: [p.id, vm.typeName(p.typeId), p.name, "\(p.priceJpy)",
-                                         p.priceSats.map { "\($0)" } ?? "",
-                                         p.stock.map { "\($0)" } ?? "―", p.isPublic ? "1" : "0"],
-                                 widths: [70, 130, 150, 60, 60, 50, 50])
-                    Button("編集") { load(p) }.buttonStyle(.app).frame(minWidth: 52, maxWidth: 80)
-                }
+                productRow(p)
             }
-            HStack(spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)],
+                      alignment: .leading, spacing: 8) {
                 Button("CSV取り込み") { vm.go(.csvImport) }.buttonStyle(.app)
                 Button("CSV書き出し") { vm.exportMaster() }.buttonStyle(.app)
                 Button("価格一覧CSV") { vm.go(.priceList) }.buttonStyle(.app)
@@ -436,6 +485,28 @@ struct ProductEditor: View {
             }
             Text("既存商品の編集可: 名前・円価格・sats価格・属性・公開状態。変更不可: 商品ID・種類。在庫は手動在庫調整。商品の削除なし（非公開・在庫0で代替）。")
                 .font(.caption).foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func productRow(_ p: Product) -> some View {
+        let table = TableRowView(cells: [p.id, vm.typeName(p.typeId), p.name, "\(p.priceJpy)",
+                                         p.priceSats.map { "\($0)" } ?? "",
+                                         p.stock.map { "\($0)" } ?? "―", p.isPublic ? "1" : "0"],
+                                 widths: [70, 130, 150, 60, 60, 50, 50])
+        let button = Button("編集") { load(p) }
+            .buttonStyle(.app)
+            .frame(minWidth: 52, maxWidth: 80)
+        if compact {
+            VStack(alignment: .leading, spacing: 6) {
+                table
+                button
+            }
+        } else {
+            HStack(spacing: 6) {
+                table
+                button
+            }
         }
     }
 
@@ -450,18 +521,27 @@ struct ProductEditor: View {
                 .disabled(editingId != nil)
             }
             LabeledField(label: "商品名", text: $name, required: true)
-            HStack {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
+                      alignment: .leading, spacing: 8) {
                 LabeledField(label: "円価格", text: $priceText, required: true)
                 LabeledField(label: "sats価格（任意）", text: $satsText)
             }
-            HStack {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
+                      alignment: .leading, spacing: 8) {
                 LabeledField(label: "属性1（ラベル: \(type?.attrLabel1 ?? "未設定")）", text: $a1, disabled: type?.attrLabel1 == nil)
                 LabeledField(label: "属性2（ラベル: \(type?.attrLabel2 ?? "未設定")）", text: $a2, disabled: type?.attrLabel2 == nil)
             }
             LabeledField(label: "属性3（ラベル: \(type?.attrLabel3 ?? "未設定")）", text: $a3, disabled: type?.attrLabel3 == nil)
-            HStack(alignment: .bottom) {
-                LabeledField(label: stockLabel, text: $stockText, disabled: editingId != nil || type?.stockMode == StockMode.none)
-                Toggle("公開", isOn: $isPublic)
+            if compact {
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledField(label: stockLabel, text: $stockText, disabled: editingId != nil || type?.stockMode == StockMode.none)
+                    Toggle("公開", isOn: $isPublic)
+                }
+            } else {
+                HStack(alignment: .bottom) {
+                    LabeledField(label: stockLabel, text: $stockText, disabled: editingId != nil || type?.stockMode == StockMode.none)
+                    Toggle("公開", isOn: $isPublic)
+                }
             }
             InfoBox(text: "採番: \(idPreview)", size: 14, tint: .yellow)
             Button("確認へ") { showConfirm = true }
@@ -554,6 +634,7 @@ struct ProductEditor: View {
 }
 
 struct ProductConfirmSheet: View {
+    @Environment(\.isCompactWidth) private var compact
     let priceJpy: Int
     let priceSats: Int?
     let rows: [(String, String)]
@@ -563,23 +644,38 @@ struct ProductConfirmSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(editing ? "商品編集の確認" : "商品追加の確認").font(.headline)
-            InfoBox(text: Fmt.yen(priceJpy), size: 44)
-            InfoBox(text: priceSats.map { Fmt.sats($0) } ?? "sats単価なし", size: 22, tint: .yellow)
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
-                TableRowView(cells: [r.0, r.1], widths: [140, 380])
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(editing ? "商品編集の確認" : "商品追加の確認").font(.headline)
+                    InfoBox(text: Fmt.yen(priceJpy), size: 44)
+                    InfoBox(text: priceSats.map { Fmt.sats($0) } ?? "sats単価なし", size: 22, tint: .yellow)
+                    ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
+                        TableRowView(cells: [r.0, r.1], widths: [140, 380])
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer()
-            HStack(spacing: 10) {
-                Button("戻る") { onBack() }.buttonStyle(.app)
-                Button(editing ? "確定して更新" : "確定して追加") { onConfirm(false) }.buttonStyle(.appPrimary)
-                if !editing {
-                    Button("確定して連続追加") { onConfirm(true) }.buttonStyle(.app)
+            if compact {
+                VStack(spacing: 8) {
+                    confirmButtons
+                }
+            } else {
+                HStack(spacing: 10) {
+                    confirmButtons
                 }
             }
         }
         .padding(20)
-        .frame(minWidth: 360, idealWidth: 560, maxWidth: 720, minHeight: 420, idealHeight: 640, maxHeight: 800)
+        .frame(minWidth: 300, idealWidth: 560, maxWidth: 720, minHeight: 360, idealHeight: 640, maxHeight: 800)
+    }
+
+    @ViewBuilder
+    private var confirmButtons: some View {
+        Button("戻る") { onBack() }.buttonStyle(.app)
+        Button(editing ? "確定して更新" : "確定して追加") { onConfirm(false) }.buttonStyle(.appPrimary)
+        if !editing {
+            Button("確定して連続追加") { onConfirm(true) }.buttonStyle(.app)
+        }
     }
 }
 
@@ -587,6 +683,7 @@ struct ProductConfirmSheet: View {
 
 struct CSVImportView: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     @State private var tables: [CSVTable?] = [nil, nil, nil]
     @State private var names = ["", "", ""]
     @State private var overwriteStock = false
@@ -611,7 +708,9 @@ struct CSVImportView: View {
                 Text("列の順序は自由です。1行でもエラーがあれば、DBと画面のデータは一切変更しません。")
                     .font(.caption).foregroundColor(.secondary)
 
-                HStack(alignment: .top, spacing: 14) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 14),
+                                         count: compact ? 1 : 3),
+                          alignment: .leading, spacing: 14) {
                     ForEach(0..<3, id: \.self) { i in
                         Panel(title: titles[i]) {
                             Text(names[i].isEmpty ? "（未選択）" : names[i])
@@ -641,7 +740,9 @@ struct CSVImportView: View {
                        isOn: $overwriteStock)
                     .onChange(of: overwriteStock) { _, _ in validate() }
 
-                HStack(spacing: 10) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10),
+                                         count: compact ? 1 : 4),
+                          alignment: .leading, spacing: 10) {
                     Button("再検証") { validate() }.buttonStyle(.app)
                     Button("取り込み実行") { showConfirm = true }
                         .buttonStyle(.appPrimary)
@@ -805,6 +906,7 @@ struct CSVImportView: View {
 
 struct ReportView: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     @State private var start = Date()
     @State private var end = Date()
     @State private var reserve = ""
@@ -824,11 +926,18 @@ struct ReportView: View {
     var body: some View {
         AdminShell("集計") {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    DatePicker("開始日", selection: $start, displayedComponents: .date)
-                    DatePicker("終了日", selection: $end, displayedComponents: .date)
+                if compact {
+                    VStack(alignment: .leading, spacing: 8) {
+                        DatePicker("開始日", selection: $start, displayedComponents: .date)
+                        DatePicker("終了日", selection: $end, displayedComponents: .date)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        DatePicker("開始日", selection: $start, displayedComponents: .date)
+                        DatePicker("終了日", selection: $end, displayedComponents: .date)
+                    }
+                    .frame(maxWidth: 620)
                 }
-                .frame(maxWidth: 620)
                 Text("グループ別（精算単位）").font(.headline)
                 TableRowView(cells: ["グループ", "区分", "種類", "paid_in", "明細数", "数量", "金額"],
                              widths: [200, 60, 140, 70, 70, 60, 120], header: true)
@@ -839,30 +948,26 @@ struct ReportView: View {
                                  widths: [200, 60, 140, 70, 70, 60, 120])
                 }
                 if rows.isEmpty { Text("対象の売上なし").foregroundColor(.secondary) }
-                HStack(alignment: .top, spacing: 12) {
-                    Panel(title: "売上（completed）") {
-                        Text("会計 \(completed.count)件\n精算額に算入")
+                if compact {
+                    VStack(alignment: .leading, spacing: 12) {
+                        salesCountPanels
                     }
-                    Panel(title: "販売取消（別枠）") {
-                        Text("\(voided.count)件\n算入しない")
-                    }
-                    Panel(title: "sats確認済み中断（別枠）") {
-                        Text("\(aborted.count)件 / sats合計 \(Fmt.sats(aborted.reduce(0) { $0 + ($1.totalSats ?? 0) }))\n算入しない")
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        salesCountPanels
                     }
                 }
-                HStack(alignment: .top, spacing: 12) {
-                    Panel(title: "受取方法別集計") {
-                        Text("現金: \(Fmt.yen(cashSales))（現金決済＋併用の現金分）")
-                        Text("sats: \(Fmt.sats(satsSales))")
-                        Text("併用会計の会計数: \(mixedCount)")
+                if compact {
+                    VStack(alignment: .leading, spacing: 12) {
+                        settlementPanels
                     }
-                    Panel(title: "現金照合（日ごと）") {
-                        LabeledField(label: "釣銭準備金（円）", text: $reserve)
-                        LabeledField(label: "実残高（円）", text: $actual)
-                        Text("差額: " + diffText)
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        settlementPanels
                     }
                 }
-                HStack(spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)],
+                          alignment: .leading, spacing: 10) {
                     Button("sats照合一覧") { vm.go(.salesHistory) }.buttonStyle(.app)
                     Button("sats照合CSV（PIN）") {
                         vm.requirePin("sats照合CSV") { vm.exportSatsReconciliation(from: start, to: end) }
@@ -881,6 +986,33 @@ struct ReportView: View {
         }
     }
 
+    @ViewBuilder
+    private var salesCountPanels: some View {
+        Panel(title: "売上（completed）") {
+            Text("会計 \(completed.count)件\n精算額に算入")
+        }
+        Panel(title: "販売取消（別枠）") {
+            Text("\(voided.count)件\n算入しない")
+        }
+        Panel(title: "sats確認済み中断（別枠）") {
+            Text("\(aborted.count)件 / sats合計 \(Fmt.sats(aborted.reduce(0) { $0 + ($1.totalSats ?? 0) }))\n算入しない")
+        }
+    }
+
+    @ViewBuilder
+    private var settlementPanels: some View {
+        Panel(title: "受取方法別集計") {
+            Text("現金: \(Fmt.yen(cashSales))（現金決済＋併用の現金分）")
+            Text("sats: \(Fmt.sats(satsSales))")
+            Text("併用会計の会計数: \(mixedCount)")
+        }
+        Panel(title: "現金照合（日ごと）") {
+            LabeledField(label: "釣銭準備金（円）", text: $reserve)
+            LabeledField(label: "実残高（円）", text: $actual)
+            Text("差額: " + diffText)
+        }
+    }
+
     private var diffText: String {
         guard let r = Int(reserve), let a = Int(actual) else { return "―" }
         return Fmt.yen(a - (r + cashSales))
@@ -891,6 +1023,7 @@ struct ReportView: View {
 
 struct SalesHistoryView: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
 
     var body: some View {
         AdminShell("販売履歴") {
@@ -899,28 +1032,58 @@ struct SalesHistoryView: View {
                              widths: [170, 90, 100, 80, 90, 170, 80], header: true)
                 if vm.sales.isEmpty { Text("記録なし").foregroundColor(.secondary) }
                 ForEach(vm.sales.reversed()) { s in
-                    HStack(spacing: 6) {
-                        TableRowView(cells: [s.id, s.status.rawValue, s.method.rawValue,
-                                             s.totalJpy.map { Fmt.num($0) } ?? "―",
-                                             s.totalSats.map { Fmt.num($0) } ?? "―",
-                                             s.completedAt == nil ? "確認 " + Fmt.time(s.confirmedAt) + "（中断）" : Fmt.time(s.completedAt),
-                                             s.refunded ? "済" : "―"],
-                                     widths: [170, 90, 100, 80, 90, 170, 80])
-                        Button("取消（PIN）") {
-                            vm.dialogPin = ""
-                            vm.dialog = .voidSale(s.id)
-                        }
-                        .buttonStyle(.app).frame(minWidth: 90, maxWidth: 130)
-                        .disabled(s.status != .completed)
-                        Button("返金済み設定（PIN）") {
-                            vm.requirePin("返金済み設定") { vm.toggleRefunded(s.id) }
-                        }
-                        .buttonStyle(.app).frame(minWidth: 120, maxWidth: 180)
-                        .disabled(s.totalSats == nil)
-                    }
+                    saleRow(s)
                 }
                 Text("取消: PIN認証 → 確認ダイアログ → 在庫を戻す（completed_atあり・在庫管理ありの種類のみ）。返金済みフラグはsats分のみ。現金分の返却はシステム外。")
                     .font(.caption).foregroundColor(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func saleRow(_ s: Sale) -> some View {
+        let table = TableRowView(cells: [s.id, s.status.rawValue, s.method.rawValue,
+                                         s.totalJpy.map { Fmt.num($0) } ?? "―",
+                                         s.totalSats.map { Fmt.num($0) } ?? "―",
+                                         s.completedAt == nil ? "確認 " + Fmt.time(s.confirmedAt) + "（中断）" : Fmt.time(s.completedAt),
+                                         s.refunded ? "済" : "―"],
+                                 widths: [170, 90, 100, 80, 90, 170, 80])
+        let buttons = VStack(spacing: 6) {
+            Button("取消（PIN）") {
+                vm.dialogPin = ""
+                vm.dialog = .voidSale(s.id)
+            }
+            .buttonStyle(.app)
+            .disabled(s.status != .completed)
+            Button("返金済み設定（PIN）") {
+                vm.requirePin("返金済み設定") { vm.toggleRefunded(s.id) }
+            }
+            .buttonStyle(.app)
+            .disabled(s.totalSats == nil)
+        }
+        if compact {
+            VStack(alignment: .leading, spacing: 6) {
+                table
+                buttons
+            }
+        } else {
+            HStack(spacing: 6) {
+                table
+                VStack(spacing: 6) {
+                    Button("取消（PIN）") {
+                        vm.dialogPin = ""
+                        vm.dialog = .voidSale(s.id)
+                    }
+                    .buttonStyle(.app).frame(minWidth: 90, maxWidth: 130)
+                    .disabled(s.status != .completed)
+                }
+                VStack(spacing: 6) {
+                    Button("返金済み設定（PIN）") {
+                        vm.requirePin("返金済み設定") { vm.toggleRefunded(s.id) }
+                    }
+                    .buttonStyle(.app).frame(minWidth: 120, maxWidth: 180)
+                    .disabled(s.totalSats == nil)
+                }
             }
         }
     }
@@ -930,6 +1093,7 @@ struct SalesHistoryView: View {
 
 struct StockAdjustView: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     @State private var productId = ""
     @State private var newStockText = ""
     @State private var reason = ""
@@ -939,13 +1103,14 @@ struct StockAdjustView: View {
 
     var body: some View {
         AdminShell("手動在庫調整") {
-            HStack(alignment: .top, spacing: 16) {
+            AdaptiveColumns(spacing: 16) {
                 Panel(title: "在庫一覧（在庫管理ありのみ）") {
                     TableRowView(cells: ["商品ID", "商品名", "在庫"], widths: [90, 200, 70], header: true)
                     ForEach(managed) { p in
                         TableRowView(cells: [p.id, p.name, p.stock.map { "\($0)" } ?? "―"], widths: [90, 200, 70])
                     }
                 }
+            } second: {
                 Panel(title: "調整") {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("対象 *").font(.caption).foregroundColor(.secondary)
@@ -958,14 +1123,23 @@ struct StockAdjustView: View {
                     LabeledField(label: "新しい在庫（counted: 0以上／unique: 0または1）", text: $newStockText, required: true)
                     Text("差分: " + diffText)
                     LabeledField(label: "理由（棚卸し等）", text: $reason, required: true)
-                    HStack(spacing: 10) {
-                        Button("キャンセル") { vm.exitAdmin() }.buttonStyle(.app)
-                        Button("調整を確定（adjust記録）") { commit() }
-                            .buttonStyle(.appPrimary)
-                            .disabled(Int(newStockText) == nil || reason.isEmpty)
+                    if compact {
+                        VStack(spacing: 8) {
+                            Button("キャンセル") { vm.exitAdmin() }.buttonStyle(.app)
+                            Button("調整を確定（adjust記録）") { commit() }
+                                .buttonStyle(.appPrimary)
+                                .disabled(Int(newStockText) == nil || reason.isEmpty)
+                        }
+                    } else {
+                        HStack(spacing: 10) {
+                            Button("キャンセル") { vm.exitAdmin() }.buttonStyle(.app)
+                            Button("調整を確定（adjust記録）") { commit() }
+                                .buttonStyle(.appPrimary)
+                                .disabled(Int(newStockText) == nil || reason.isEmpty)
+                        }
                     }
                 }
-                .frame(maxWidth: 480)
+                .frame(maxWidth: compact ? .infinity : 480)
             }
         }
         .onAppear { if productId.isEmpty { productId = managed.first?.id ?? "" } }
@@ -1000,7 +1174,7 @@ struct PriceListView: View {
 
     var body: some View {
         AdminShell("価格一覧") {
-            HStack(alignment: .top, spacing: 20) {
+            AdaptiveColumns(spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("価格一覧（登録商品のみ・野良は含めない）").font(.headline)
                     TableRowView(cells: ["product_id", "type_id", "name", "price_jpy", "price_sats"],
@@ -1014,6 +1188,7 @@ struct PriceListView: View {
                         .frame(maxWidth: 280)
                     Text("おしながきとの照合用。sats価格が空の商品を確認する。").font(.caption).foregroundColor(.secondary)
                 }
+            } second: {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("画像なしの登録商品ID").font(.headline)
                     TableRowView(cells: ["product_id", "name"], widths: [100, 240], header: true)
@@ -1031,16 +1206,27 @@ struct PriceListView: View {
 
 struct SyncView: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
 
     var body: some View {
         AdminShell("公開サイト送信") {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    InfoBox(text: "通信: \(vm.isOnline ? "あり" : "なし")　／　最終送信: \(Fmt.time(vm.lastSyncAt))", size: 14, bold: false)
-                    Button("公開サイトへ送信") { vm.sendSnapshot() }
-                        .buttonStyle(.appPrimary)
-                        .frame(maxWidth: 280, minHeight: 52)
-                    InfoBox(text: "画像の版識別子: a1b2c3d4（仮）", size: 12, bold: false)
+                if compact {
+                    VStack(spacing: 10) {
+                        InfoBox(text: "通信: \(vm.isOnline ? "あり" : "なし")　／　最終送信: \(Fmt.time(vm.lastSyncAt))", size: 14, bold: false)
+                        Button("公開サイトへ送信") { vm.sendSnapshot() }
+                            .buttonStyle(.appPrimary)
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                        InfoBox(text: "画像の版識別子: a1b2c3d4（仮）", size: 12, bold: false)
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        InfoBox(text: "通信: \(vm.isOnline ? "あり" : "なし")　／　最終送信: \(Fmt.time(vm.lastSyncAt))", size: 14, bold: false)
+                        Button("公開サイトへ送信") { vm.sendSnapshot() }
+                            .buttonStyle(.appPrimary)
+                            .frame(maxWidth: 280, minHeight: 52)
+                        InfoBox(text: "画像の版識別子: a1b2c3d4（仮）", size: 12, bold: false)
+                    }
                 }
                 TableRowView(cells: ["id", "at", "result", "detail"], widths: [110, 220, 90, 400], header: true)
                 ForEach(vm.syncLog) { l in
