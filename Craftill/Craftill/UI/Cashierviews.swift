@@ -5,6 +5,7 @@ import SwiftUI
 struct RegisterView: View {
     @EnvironmentObject var vm: AppViewModel
     @State private var manualID = ""
+    @State private var showScanner = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,15 +14,19 @@ struct RegisterView: View {
                     .toggleStyle(.switch)
                 Button("メニュー") { vm.openMenu() }
                     .buttonStyle(.app)
-                    .frame(width: 140)
+                    .frame(maxWidth: 160)
                     .disabled(vm.saleState != .idle)
             }
-            HStack(alignment: .top, spacing: 10) {
+            AdaptiveHStack(breakpoint: 900, spacing: 10) {
                 productPanel
-                cartPanel.frame(width: 500)
+            } second: {
+                cartPanel
             }
             .padding(10)
             MessageBar()
+        }
+        .sheet(isPresented: $showScanner) {
+            QRScannerSheet().environmentObject(vm)
         }
     }
 
@@ -32,31 +37,32 @@ struct RegisterView: View {
                     ForEach(vm.types) { t in
                         Button(vm.tabLabel(t)) { vm.selectedTypeId = t.typeId }
                             .buttonStyle(AppButtonStyle(primary: t.typeId == vm.selectedTypeId))
-                            .frame(width: 210)
+                            .frame(minWidth: 120, maxWidth: 240)
                     }
                 }
             }
-            .frame(height: 48)
+            .frame(minHeight: 40, maxHeight: 56)
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)], spacing: 8) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 240), spacing: 8)], spacing: 8) {
                     ForEach(vm.products(ofType: vm.selectedTypeId)) { p in
                         ProductTile(product: p)
                     }
                 }
             }
             HStack(spacing: 8) {
-                Button("カメラ読み取り") { vm.message = "カメラ読み取り（スタブ）" }
+                Button("カメラ読み取り") { showScanner = true }
                     .buttonStyle(.app)
-                    .frame(width: 150)
+                    .frame(minWidth: 120, maxWidth: 180)
                 TextField("商品ID手動入力（例: mk8）", text: $manualID)
                     .textFieldStyle(.roundedBorder)
+                    .frame(minWidth: 120)
                     .onSubmit { submitID() }
                 Button("追加") { submitID() }
                     .buttonStyle(.app)
-                    .frame(width: 80)
+                    .frame(minWidth: 64, maxWidth: 90)
                 Button("野良追加") { vm.showAdhoc = true }
                     .buttonStyle(.app)
-                    .frame(width: 110)
+                    .frame(minWidth: 88, maxWidth: 130)
             }
         }
         .padding(10)
@@ -98,11 +104,11 @@ struct RegisterView: View {
             HStack(spacing: 10) {
                 Button("会計へ進む") { vm.proceedToPayment() }
                     .buttonStyle(.appPrimary)
-                    .frame(height: 52)
+                    .frame(maxWidth: .infinity, minHeight: 52)
                     .disabled(vm.saleState != .scanning || vm.cart.isEmpty)
                 Button("会計中断") { vm.requestSuspend() }
                     .buttonStyle(.app)
-                    .frame(width: 140, height: 52)
+                    .frame(maxWidth: 160, minHeight: 52)
                     .disabled(vm.saleState != .scanning)
             }
         }
@@ -143,7 +149,8 @@ struct AdhocSheet: View {
             if confirming { confirmView } else { formView }
         }
         .padding(20)
-        .frame(minWidth: 520, minHeight: 560)
+        .frame(minWidth: 360, idealWidth: 520, maxWidth: .infinity,
+               minHeight: 420, idealHeight: 560, maxHeight: .infinity)
     }
 
     private var formView: some View {
@@ -210,7 +217,7 @@ struct PaymentSelectView: View {
     var body: some View {
         VStack(spacing: 0) {
             TopBar("レジ", state: vm.saleState.label)
-            HStack(alignment: .top, spacing: 20) {
+            AdaptiveHStack(breakpoint: 900, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("カート（読み取り専用）").font(.headline)
                     TableRowView(cells: ["商品ID", "商品名", "数量", "小計"], widths: [100, 200, 60, 110], header: true)
@@ -223,7 +230,7 @@ struct PaymentSelectView: View {
                         Text(vm.cashLine).font(.system(size: 16, weight: .bold))
                     }
                 }
-                .frame(width: 520)
+            } second: {
                 VStack(spacing: 14) {
                     Text("支払方法を選択").font(.headline).frame(maxWidth: .infinity, alignment: .leading)
                     Button { vm.chooseCash() } label: {
@@ -274,7 +281,7 @@ struct CashEntryView: View {
     var body: some View {
         VStack(spacing: 0) {
             TopBar("レジ", state: vm.saleState.label)
-            HStack(alignment: .top, spacing: 40) {
+            AdaptiveHStack(breakpoint: 820, spacing: 28) {
                 VStack(spacing: 12) {
                     if mixed {
                         InfoBox(text: "sats確認済み　\(Fmt.sats(vm.totals.sats))　確認 \(Fmt.time(vm.satsConfirmedAt))",
@@ -285,25 +292,25 @@ struct CashEntryView: View {
                     InfoBox(text: "お釣り\n" + (vm.canConfirmCash ? Fmt.yen(vm.change) : "―"), size: 22)
                     Button("確定") { vm.confirmCash() }
                         .buttonStyle(.appPrimary)
-                        .frame(height: 64)
+                        .frame(maxWidth: .infinity, minHeight: 60)
                         .disabled(!vm.canConfirmCash)
                     Text("受取額 < 請求額の間、確定ボタン無効").font(.caption).foregroundColor(.secondary)
                     Button(mixed ? "会計中断（PIN必須・記録を残す）" : "会計中断") { vm.requestSuspend() }
                         .buttonStyle(.app)
                 }
-                .frame(width: 520)
+            } second: {
                 VStack(alignment: .leading, spacing: 12) {
                     KeypadView { vm.pressKey($0) }
                     HStack(spacing: 8) {
                         Button("＋1,000円") { vm.addCash(1_000) }.buttonStyle(.app)
                         Button("＋5,000円") { vm.addCash(5_000) }.buttonStyle(.app)
                     }
-                    .frame(width: 264)
+                    .frame(maxWidth: 360)
                     HStack(spacing: 8) {
                         Button("＋10,000円") { vm.addCash(10_000) }.buttonStyle(.app)
                         Button("クリア") { vm.pressKey("C") }.buttonStyle(.app)
                     }
-                    .frame(width: 264)
+                    .frame(maxWidth: 360)
                     if mixed {
                         Text("済承認後は方法選び直し・キャンセル不可。").font(.caption).foregroundColor(.secondary)
                     }
@@ -338,11 +345,11 @@ struct SatsWaitingView: View {
                     }
                     Button("sats額をコピー") { vm.copySatsAmount() }
                         .buttonStyle(.app)
-                        .frame(height: 56)
+                        .frame(maxWidth: 220, minHeight: 52)
                 }
                 Button("済（WoSで入金を確認）") { vm.askSatsConfirm() }
                     .buttonStyle(.appPrimary)
-                    .frame(height: 84)
+                    .frame(maxWidth: 520, minHeight: 72)
                 HStack(spacing: 14) {
                     Button("方法選び直し") { vm.reselectMethod() }.buttonStyle(.app)
                     Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
@@ -350,7 +357,7 @@ struct SatsWaitingView: View {
                 Text("済承認前のみ方法選び直し・キャンセル可。")
                     .font(.caption).foregroundColor(.secondary)
             }
-            .frame(width: 620)
+            .frame(maxWidth: 620)
             .padding(.top, 24)
             Spacer()
             MessageBar()
@@ -378,9 +385,10 @@ struct DoneView: View {
                 }
                 Button("次の会計へ") { vm.nextSale() }
                     .buttonStyle(.appPrimary)
-                    .frame(width: 600, height: 72)
+                    .frame(maxWidth: 600, minHeight: 64)
             }
             .padding(.top, 24)
+            .frame(maxWidth: 720)
             Spacer()
             MessageBar()
         }

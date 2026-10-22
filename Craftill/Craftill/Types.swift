@@ -330,6 +330,16 @@ struct IdSequencer {
     private var logSeq = 0
     private var adhocSeq = 0
 
+    /// 起動時に既存データから続きを採番するための初期化。
+    /// これをしないと再起動後に `M-000001` などが再利用され、主キーが衝突する。
+    init(saleCounters: [String: Int] = [:], movementSeq: Int = 0,
+         logSeq: Int = 0, adhocSeq: Int = 0) {
+        self.saleCounters = saleCounters
+        self.movementSeq = movementSeq
+        self.logSeq = logSeq
+        self.adhocSeq = adhocSeq
+    }
+
     /// 販売ID。日付ごとに 001 から数え直す。
     mutating func nextSaleID(at date: Date) -> String {
         let day = DayKey.string(from: date)

@@ -5,11 +5,15 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            content
-            if let d = vm.dialog {
+            if vm.isUnlocked {
+                content
+            } else {
+                LockView()
+            }
+            if vm.isUnlocked, let d = vm.dialog {
                 DialogOverlay(dialog: d)
             }
-            if let p = vm.pinPrompt {
+            if vm.isUnlocked, let p = vm.pinPrompt {
                 PinOverlay(prompt: p)
             }
         }
@@ -17,7 +21,7 @@ struct RootView: View {
         .sheet(isPresented: $vm.showAdhoc) {
             AdhocSheet().environmentObject(vm)
         }
-        .frame(minWidth: 1180, minHeight: 760)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -32,6 +36,7 @@ struct RootView: View {
         case .salesHistory: SalesHistoryView()
         case .stockAdjust: StockAdjustView()
         case .priceList: PriceListView()
+        case .qrLabels: QRLabelView()
         case .sync: SyncView()
         }
     }

@@ -159,17 +159,53 @@ struct TableRowView: View {
     var header = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { i, c in
+        TableRowLayout(weights: widths) {
+            ForEach(Array(cells.enumerated()), id: \.offset) { _, c in
                 Text(c)
                     .font(.system(size: 12, weight: header ? .bold : .regular))
-                    .frame(width: widths[i], alignment: .leading)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 6)
                     .overlay(Rectangle().stroke(Color.gray.opacity(0.3)))
             }
         }
         .background(header ? Color.gray.opacity(0.15) : Color.clear)
+    }
+}
+
+/// 列幅を「比率」として扱う。画面幅が変わっても表がはみ出さない。
+private struct TableRowLayout: Layout {
+    let weights: [CGFloat]
+    var spacing: CGFloat = 0
+
+    private func columnWidths(total: CGFloat) -> [CGFloat] {
+        let valid = weights.isEmpty ? [1] : weights.map { max(0.01, $0) }
+        let sum = valid.reduce(0, +)
+        return valid.map { total * $0 / sum }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 0
+        let widths = columnWidths(total: width)
+        var height: CGFloat = 0
+        for (i, subview) in subviews.enumerated() {
+            let w = widths.indices.contains(i) ? widths[i] : 0
+            height = max(height, subview.sizeThatFits(ProposedViewSize(width: w, height: nil)).height)
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let widths = columnWidths(total: bounds.width)
+        var x = bounds.minX
+        for (i, subview) in subviews.enumerated() {
+            let w = widths.indices.contains(i) ? widths[i] : 0
+            subview.place(at: CGPoint(x: x, y: bounds.minY),
+                          proposal: ProposedViewSize(width: w, height: bounds.height))
+            x += w + spacing
+        }
     }
 }
 
@@ -186,12 +222,16 @@ struct TopBar<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(state == nil ? title : "\(title)　｜　状態: \(state ?? "")").font(.headline)
-            Spacer()
+            Text(state == nil ? title : "\(title)　｜　状態: \(state ?? "")")
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Spacer(minLength: 8)
             trailing
         }
         .padding(.horizontal, 12)
-        .frame(height: 48)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
         .background(Color.gray.opacity(0.15))
     }
 }
@@ -208,11 +248,11 @@ struct MessageBar: View {
     var body: some View {
         if !vm.message.isEmpty {
             HStack {
-                Text(vm.message).font(.callout)
-                Spacer()
+                Text(vm.message).font(.callout).lineLimit(3)
+                Spacer(minLength: 8)
                 Button("閉じる") { vm.message = "" }
                     .buttonStyle(.app)
-                    .frame(width: 90)
+                    .frame(maxWidth: 90)
             }
             .padding(8)
             .background(Color.yellow.opacity(0.25))
@@ -225,14 +265,47 @@ struct KeypadView: View {
     private let keys = ["7", "8", "9", "4", "5", "6", "1", "2", "3", "0", "00", "C"]
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.fixed(80), spacing: 8), count: 3), spacing: 8) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
             ForEach(keys, id: \.self) { k in
                 Button(k) { onKey(k) }
                     .buttonStyle(.app)
-                    .frame(height: 56)
+                    .frame(maxWidth: .infinity, minHeight: 52)
             }
         }
-        .frame(width: 264)
+        .frame(maxWidth: 360)
+    }
+}
+
+/// 横幅が足りない機種（小さいMac・ウィンドウ縮小）では縦に積む。
+struct AdaptiveHStack<First: View, Second: View>: View {
+    var breakpoint: CGFloat = 900
+    var spacing: CGFloat = 12
+    private let first: First
+    private let second: Second
+
+    init(breakpoint: CGFloat = 900, spacing: CGFloat = 12,
+         @ViewBuilder first: () -> First, @ViewBuilder second: () -> Second) {
+        self.breakpoint = breakpoint
+        self.spacing = spacing
+        self.first = first()
+        self.second = second()
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            if geo.size.width >= breakpoint {
+                HStack(alignment: .top, spacing: spacing) {
+                    first.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    second.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: spacing) {
+                    first.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    second.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
     }
 }
 
@@ -251,7 +324,7 @@ struct AdminShell<Content: View>: View {
             TopBar(title, state: vm.saleState.label) {
                 Button("メニューへ") { vm.exitAdmin() }
                     .buttonStyle(.app)
-                    .frame(width: 140)
+                    .frame(maxWidth: 140)
             }
             ScrollView {
                 content
@@ -299,13 +372,17 @@ struct ProductTile: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     }
                 }
-                .frame(height: 70)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .aspectRatio(1.5, contentMode: .fit)
+                .frame(maxHeight: 140)
                 Text(product.id + "\n" + product.name)
                     .font(.system(size: 11))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("\(Fmt.yen(product.priceJpy)) / \(satsText)")
                     .font(.system(size: 11))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .padding(6)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.white))
@@ -330,11 +407,11 @@ struct CartRowView: View {
         let fixedQty = stockMode(of: line, in: vm.types) == .unique
         HStack(spacing: 8) {
             PlaceholderImage(label: line.isAdhoc ? "野良" : "画像")
-                .frame(width: 52, height: 52)
+                .frame(minWidth: 36, idealWidth: 52, maxWidth: 52, minHeight: 36, idealHeight: 52, maxHeight: 52)
                 .cornerRadius(4)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text(line.id).font(.caption).foregroundColor(.secondary)
+                    Text(line.id).font(.caption).foregroundColor(.secondary).lineLimit(1)
                     if line.isAdhoc {
                         Text("野良")
                             .font(.caption2)
@@ -343,21 +420,25 @@ struct CartRowView: View {
                             .cornerRadius(3)
                     }
                 }
-                Text(line.name).font(.system(size: 13, weight: .bold)).lineLimit(1)
-                Text(priceText).font(.caption)
+                Text(line.name).font(.system(size: 13, weight: .bold)).lineLimit(1).minimumScaleFactor(0.7)
+                Text(priceText).font(.caption).lineLimit(1).minimumScaleFactor(0.7)
                 if line.isAdhoc {
-                    Text("グループ: \(vm.groupLabel(line.groupId))").font(.caption2).foregroundColor(.secondary)
+                    Text("グループ: \(vm.groupLabel(line.groupId))").font(.caption2).foregroundColor(.secondary).lineLimit(1)
                 }
             }
-            Spacer(minLength: 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
             Button("−") { vm.decreaseQty(index) }
-                .buttonStyle(.app).frame(width: 36).disabled(fixedQty)
-            Text("\(line.qty)").frame(width: 28)
+                .buttonStyle(.app).frame(minWidth: 32, maxWidth: 44).disabled(fixedQty)
+            Text("\(line.qty)").frame(minWidth: 24)
             Button("＋") { vm.increaseQty(index) }
-                .buttonStyle(.app).frame(width: 36).disabled(fixedQty)
-            Text(Fmt.yen(line.subtotalJpy)).font(.system(size: 13)).frame(width: 78, alignment: .trailing)
+                .buttonStyle(.app).frame(minWidth: 32, maxWidth: 44).disabled(fixedQty)
+            Text(Fmt.yen(line.subtotalJpy))
+                .font(.system(size: 13))
+                .frame(minWidth: 60, maxWidth: 90, alignment: .trailing)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             Button("削除") { vm.removeLine(index) }
-                .buttonStyle(.app).frame(width: 60)
+                .buttonStyle(.app).frame(minWidth: 52, maxWidth: 70)
         }
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.4)))
@@ -444,7 +525,7 @@ struct DialogOverlay: View {
                 }
             }
             .padding(20)
-            .frame(width: 440)
+            .frame(minWidth: 280, idealWidth: 440, maxWidth: 560)
             .background(RoundedRectangle(cornerRadius: 10).fill(.background))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.gray.opacity(0.5)))
         }
@@ -463,7 +544,7 @@ struct PinOverlay: View {
                 Text(prompt.title).font(.headline)
                 Text(entered.isEmpty ? "PINを入力" : String(repeating: "● ", count: entered.count))
                     .font(.system(size: 24))
-                    .frame(height: 40)
+                    .frame(minHeight: 40)
                 KeypadView { k in
                     if k == "C" {
                         entered = ""
@@ -480,10 +561,10 @@ struct PinOverlay: View {
                     .buttonStyle(.appPrimary)
                     .disabled(entered.isEmpty)
                 }
-                .frame(width: 264)
+                .frame(maxWidth: 360)
             }
             .padding(20)
-            .frame(width: 340)
+            .frame(minWidth: 280, idealWidth: 340, maxWidth: 420)
             .background(RoundedRectangle(cornerRadius: 10).fill(.background))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.gray.opacity(0.5)))
         }

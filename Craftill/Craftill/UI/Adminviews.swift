@@ -1,5 +1,46 @@
 import SwiftUI
 
+// MARK: - 起動時のロック解除
+
+struct LockView: View {
+    @EnvironmentObject var vm: AppViewModel
+    @State private var entered = ""
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            Text("レ ジ").font(.system(size: 34, weight: .bold))
+            Text(entered.isEmpty ? "PINを入力" : String(repeating: "● ", count: entered.count))
+                .font(.system(size: 26))
+                .frame(minHeight: 40)
+            KeypadView { k in
+                if k == "C" {
+                    entered = ""
+                } else if entered.count + k.count <= 12 {
+                    entered += k
+                }
+            }
+            .frame(maxWidth: 320)
+            HStack(spacing: 12) {
+                Button("クリア") { entered = "" }.buttonStyle(.app)
+                Button("解除") {
+                    if vm.unlock(entered) { entered = "" }
+                }
+                .buttonStyle(.appPrimary)
+                .disabled(entered.isEmpty)
+            }
+            .frame(maxWidth: 320)
+            if !vm.message.isEmpty {
+                Text(vm.message).font(.callout).foregroundColor(.red)
+            }
+            Spacer()
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.gray.opacity(0.05))
+    }
+}
+
 // MARK: - 初回起動（PIN未設定）
 
 struct InitialLaunchView: View {
@@ -20,11 +61,11 @@ struct InitialLaunchView: View {
                 }
                 Button("PINを設定する") { vm.setPin(pin1, confirm: pin2) }
                     .buttonStyle(.appPrimary)
-                    .frame(height: 60)
+                    .frame(minHeight: 52)
                     .disabled(pin1.isEmpty || pin2.isEmpty)
                 Button("初期投入（グループ・種類・商品の登録／CSV取り込み）") { vm.go(.edit) }
                     .buttonStyle(.app)
-                    .frame(height: 60)
+                    .frame(minHeight: 52)
                 Button("販売取消・在庫調整・エクスポート・価格編集") {}
                     .buttonStyle(.app)
                     .disabled(true)
@@ -35,7 +76,7 @@ struct InitialLaunchView: View {
                     Text("カメラ読み取りが再開できない場合は再起動を促す表示を出す。")
                 }
             }
-            .frame(width: 620)
+            .frame(maxWidth: 680)
             .padding(.top, 24)
             Spacer()
             MessageBar()
@@ -70,9 +111,10 @@ struct MenuView: View {
                 vm.requirePin("手動在庫調整") { vm.go(.stockAdjust) }
             },
             Item(id: "price", title: "価格一覧・画像なしID一覧", note: "") { vm.go(.priceList) },
+            Item(id: "qr", title: "QRラベル生成", note: "商品IDのQR＋ID文字（印刷用）") { vm.go(.qrLabels) },
             Item(id: "sync", title: "公開サイトへ送信・送信ログ", note: "") { vm.go(.sync) },
             Item(id: "export", title: "エクスポート（販売・在庫・精算CSV）", note: "PIN必須") {
-                vm.requirePin("エクスポート") { vm.dialog = .message("エクスポート（スタブ）") }
+                vm.requirePin("エクスポート") { vm.exportAll() }
             }
         ]
     }
@@ -123,7 +165,7 @@ struct EditView: View {
                     ForEach(Tab.allCases) { t in Text(t.rawValue).tag(t) }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 360)
+                .frame(maxWidth: 360)
                 switch tab {
                 case .group: GroupEditor()
                 case .type: TypeEditor()
@@ -153,9 +195,9 @@ struct GroupEditor: View {
                             label = g.label
                             editing = true
                         }
-                        .buttonStyle(.app).frame(width: 100)
+                        .buttonStyle(.app).frame(minWidth: 80, maxWidth: 120)
                         Button("削除") { vm.deleteGroup(g.groupId) }
-                            .buttonStyle(.app).frame(width: 70)
+                            .buttonStyle(.app).frame(minWidth: 60, maxWidth: 80)
                             .disabled(vm.isGroupInUse(g.groupId))
                     }
                 }
@@ -171,7 +213,7 @@ struct GroupEditor: View {
                     Button("変更をやめる") { reset() }.buttonStyle(.app)
                 }
             }
-            .frame(width: 380)
+            .frame(maxWidth: 420)
         }
     }
 
@@ -223,7 +265,7 @@ struct TypeEditor: View {
                         TableRowView(cells: [t.typeId, t.name, t.idPrefix, "\(t.idDigits)", t.stockMode.label,
                                              vm.groupLabel(t.groupId), "\(t.nextNo)"],
                                      widths: [90, 140, 60, 40, 110, 110, 70])
-                        Button("編集") { load(t) }.buttonStyle(.app).frame(width: 60)
+                        Button("編集") { load(t) }.buttonStyle(.app).frame(minWidth: 52, maxWidth: 80)
                     }
                 }
                 Text("編集可（既存）: 表示名・属性ラベル・グループ。種類ID・接頭辞・桁数・在庫の扱いは変更不可。next_no は減らさない。")
@@ -264,7 +306,7 @@ struct TypeEditor: View {
                     Button("編集をやめる") { reset() }.buttonStyle(.app)
                 }
             }
-            .frame(width: 440)
+            .frame(maxWidth: 480)
         }
     }
 
@@ -354,7 +396,7 @@ struct ProductEditor: View {
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             listPanel
-            formPanel.frame(width: 480)
+            formPanel.frame(maxWidth: 520)
         }
         .onAppear { if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" } }
         .sheet(isPresented: $showConfirm) {
@@ -379,12 +421,12 @@ struct ProductEditor: View {
                                          p.priceSats.map { "\($0)" } ?? "",
                                          p.stock.map { "\($0)" } ?? "―", p.isPublic ? "1" : "0"],
                                  widths: [70, 130, 150, 60, 60, 50, 50])
-                    Button("編集") { load(p) }.buttonStyle(.app).frame(width: 60)
+                    Button("編集") { load(p) }.buttonStyle(.app).frame(minWidth: 52, maxWidth: 80)
                 }
             }
             HStack(spacing: 8) {
                 Button("CSV取り込み") { vm.go(.csvImport) }.buttonStyle(.app)
-                Button("CSV書き出し") { vm.dialog = .message("CSV書き出し（スタブ）") }.buttonStyle(.app)
+                Button("CSV書き出し") { vm.exportMaster() }.buttonStyle(.app)
                 Button("価格一覧CSV") { vm.go(.priceList) }.buttonStyle(.app)
                 Button("画像なしID一覧") { vm.go(.priceList) }.buttonStyle(.app)
             }
@@ -420,7 +462,7 @@ struct ProductEditor: View {
             InfoBox(text: "採番: \(idPreview)", size: 14, tint: .yellow)
             Button("確認へ") { showConfirm = true }
                 .buttonStyle(.appPrimary)
-                .frame(height: 48)
+                .frame(minHeight: 44)
                 .disabled(!canSubmit)
             if editingId != nil {
                 Button("編集をやめる") { reset(keepType: true) }.buttonStyle(.app)
@@ -533,7 +575,7 @@ struct ProductConfirmSheet: View {
             }
         }
         .padding(20)
-        .frame(minWidth: 560, minHeight: 640)
+        .frame(minWidth: 360, idealWidth: 560, maxWidth: 720, minHeight: 420, idealHeight: 640, maxHeight: 800)
     }
 }
 
@@ -591,7 +633,7 @@ struct CSVImportView: View {
                         .disabled(!errors.isEmpty)
                     Button("キャンセル") { vm.exitAdmin() }.buttonStyle(.app)
                 }
-                .frame(width: 640)
+                .frame(maxWidth: 720)
             }
         }
     }
@@ -624,7 +666,7 @@ struct ReportView: View {
                     DatePicker("開始日", selection: $start, displayedComponents: .date)
                     DatePicker("終了日", selection: $end, displayedComponents: .date)
                 }
-                .frame(width: 560)
+                .frame(maxWidth: 620)
                 Text("グループ別（精算単位）").font(.headline)
                 TableRowView(cells: ["グループ", "区分", "種類", "paid_in", "明細数", "数量", "金額"],
                              widths: [200, 60, 140, 70, 70, 60, 120], header: true)
@@ -661,10 +703,10 @@ struct ReportView: View {
                 HStack(spacing: 10) {
                     Button("sats照合一覧") { vm.go(.salesHistory) }.buttonStyle(.app)
                     Button("グループ別精算CSV（PIN）") {
-                        vm.requirePin("グループ別精算CSV") { vm.dialog = .message("精算CSV出力（スタブ）") }
+                        vm.requirePin("グループ別精算CSV") { vm.exportSettlement(from: start, to: end) }
                     }.buttonStyle(.app)
                     Button("販売・在庫エクスポート（PIN）") {
-                        vm.requirePin("エクスポート") { vm.dialog = .message("エクスポート（スタブ）") }
+                        vm.requirePin("エクスポート") { vm.exportAll() }
                     }.buttonStyle(.app)
                     Button("販売履歴・取消") { vm.go(.salesHistory) }.buttonStyle(.app)
                 }
@@ -703,12 +745,12 @@ struct SalesHistoryView: View {
                             vm.dialogPin = ""
                             vm.dialog = .voidSale(s.id)
                         }
-                        .buttonStyle(.app).frame(width: 110)
+                        .buttonStyle(.app).frame(minWidth: 90, maxWidth: 130)
                         .disabled(s.status != .completed)
                         Button("返金済み設定（PIN）") {
                             vm.requirePin("返金済み設定") { vm.toggleRefunded(s.id) }
                         }
-                        .buttonStyle(.app).frame(width: 160)
+                        .buttonStyle(.app).frame(minWidth: 120, maxWidth: 180)
                         .disabled(s.totalSats == nil)
                     }
                 }
@@ -758,7 +800,7 @@ struct StockAdjustView: View {
                             .disabled(Int(newStockText) == nil || reason.isEmpty)
                     }
                 }
-                .frame(width: 440)
+                .frame(maxWidth: 480)
             }
         }
         .onAppear { if productId.isEmpty { productId = managed.first?.id ?? "" } }
@@ -772,13 +814,17 @@ struct StockAdjustView: View {
 
     private func commit() {
         guard let n = Int(newStockText) else { return }
-        if let err = vm.adjustStock(productId: productId, newStock: n, reason: reason) {
-            vm.message = err
-            return
+        let pid = productId
+        let reasonText = reason
+        vm.requirePin("在庫調整") {
+            if let err = vm.performStockAdjustment(productId: pid, newStock: n, reason: reasonText) {
+                vm.message = err
+                return
+            }
+            vm.message = "在庫を調整しました: \(pid) → \(n)"
+            newStockText = ""
+            reason = ""
         }
-        vm.message = "在庫を調整しました: \(productId) → \(n)"
-        newStockText = ""
-        reason = ""
     }
 }
 
@@ -798,9 +844,9 @@ struct PriceListView: View {
                         TableRowView(cells: [p.id, p.typeId, p.name, "\(p.priceJpy)", p.priceSats.map { "\($0)" } ?? "（空）"],
                                      widths: [90, 100, 180, 80, 90])
                     }
-                    Button("価格一覧CSV出力") { vm.dialog = .message("価格一覧CSV出力（スタブ）") }
+                    Button("価格一覧CSV出力") { vm.exportPriceList() }
                         .buttonStyle(.app)
-                        .frame(width: 240)
+                        .frame(maxWidth: 280)
                     Text("おしながきとの照合用。sats価格が空の商品を確認する。").font(.caption).foregroundColor(.secondary)
                 }
                 VStack(alignment: .leading, spacing: 8) {
@@ -828,7 +874,7 @@ struct SyncView: View {
                     InfoBox(text: "通信: \(vm.isOnline ? "あり" : "なし")　／　最終送信: \(Fmt.time(vm.lastSyncAt))", size: 14, bold: false)
                     Button("公開サイトへ送信") { vm.sendSnapshot() }
                         .buttonStyle(.appPrimary)
-                        .frame(width: 240, height: 56)
+                        .frame(maxWidth: 280, minHeight: 52)
                     InfoBox(text: "画像の版識別子: a1b2c3d4（仮）", size: 12, bold: false)
                 }
                 TableRowView(cells: ["id", "at", "result", "detail"], widths: [110, 220, 90, 400], header: true)
