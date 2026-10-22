@@ -1,4 +1,9 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 // MARK: - 書式
 
@@ -133,6 +138,40 @@ struct PlaceholderImage: View {
             Rectangle().fill(Color.gray.opacity(0.25))
             Text(label).font(.caption).foregroundColor(.secondary)
         }
+    }
+}
+
+/// 同梱画像（`image_ref`）を表示する。ファイルが無い場合はプレースホルダー。
+/// 画像ファイル名は商品IDと同一（例: `KH-008.jpg`。A-17）。
+struct ProductImageView: View {
+    let imageRef: String?
+    var placeholder = "画像"
+
+    var body: some View {
+        ZStack {
+            if let image = Self.bundledImage(imageRef) {
+                image.resizable().scaledToFill()
+            } else {
+                PlaceholderImage(label: placeholder)
+            }
+        }
+        .clipped()
+    }
+
+    private static func bundledImage(_ ref: String?) -> Image? {
+        guard let ref, !ref.isEmpty,
+              let url = Bundle.main.url(forResource: ref, withExtension: nil) else {
+            return nil
+        }
+        #if canImport(AppKit)
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        return Image(nsImage: image)
+        #elseif canImport(UIKit)
+        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        return Image(uiImage: image)
+        #else
+        return nil
+        #endif
     }
 }
 
@@ -350,7 +389,7 @@ struct ProductTile: View {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack {
                     if product.imageRef != nil {
-                        PlaceholderImage()
+                        ProductImageView(imageRef: product.imageRef)
                     } else {
                         Text("画像なし\n" + (product.attrText(in: vm.types) ?? ""))
                             .font(.caption)
@@ -405,8 +444,9 @@ struct CartRowView: View {
 
     var body: some View {
         let fixedQty = stockMode(of: line, in: vm.types) == .unique
+        let imageRef = line.isAdhoc ? nil : vm.inventory.first(where: { $0.id == line.id })?.imageRef
         HStack(spacing: 8) {
-            PlaceholderImage(label: line.isAdhoc ? "野良" : "画像")
+            ProductImageView(imageRef: imageRef, placeholder: line.isAdhoc ? "野良" : "画像")
                 .frame(minWidth: 36, idealWidth: 52, maxWidth: 52, minHeight: 36, idealHeight: 52, maxHeight: 52)
                 .cornerRadius(4)
             VStack(alignment: .leading, spacing: 2) {

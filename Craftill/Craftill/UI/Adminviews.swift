@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - 起動時のロック解除
 
@@ -63,7 +64,10 @@ struct InitialLaunchView: View {
                     .buttonStyle(.appPrimary)
                     .frame(minHeight: 52)
                     .disabled(pin1.isEmpty || pin2.isEmpty)
-                Button("初期投入（グループ・種類・商品の登録／CSV取り込み）") { vm.go(.edit) }
+                Button("初期投入（グループ・種類・商品の登録）") { vm.go(.edit) }
+                    .buttonStyle(.app)
+                    .frame(minHeight: 52)
+                Button("初期投入（CSV取り込み）") { vm.go(.csvImport) }
                     .buttonStyle(.app)
                     .frame(minHeight: 52)
                 Button("販売取消・在庫調整・エクスポート・価格編集") {}
@@ -581,60 +585,218 @@ struct ProductConfirmSheet: View {
 
 // MARK: - CSV取り込み
 
-struct CSVError: Identifiable {
-    let id = UUID()
-    let row: Int
-    let column: String
-    let reason: String
-}
-
 struct CSVImportView: View {
     @EnvironmentObject var vm: AppViewModel
-    @State private var files = ["", "", ""]
+    @State private var tables: [CSVTable?] = [nil, nil, nil]
+    @State private var names = ["", "", ""]
     @State private var overwriteStock = false
-    @State private var errors: [CSVError] = [
-        CSVError(row: 12, column: "product_id", reason: "接頭辞・桁数が種類と一致しない"),
-        CSVError(row: 15, column: "product_id", reason: "next_no 未満の新規ID（欠番の再利用）"),
-        CSVError(row: 21, column: "stock", reason: "unique の範囲外（0または1）")
-    ]
+    @State private var errors: [CSVError] = []
+    @State private var plan: CSVImportPlan?
+
+    @State private var showImporter = false
+    @State private var importSlot: Int?
+    @State private var showConfirm = false
 
     private let titles = ["① グループ定義CSV", "② 種類定義CSV", "③ 商品マスタCSV"]
-    private let samples = ["groups.csv", "types.csv", "products.csv"]
+    private let hints = [
+        "group_id, label",
+        "type_id, name, id_prefix, id_digits, stock_mode, …",
+        "product_id, type_id, name, price_jpy, stock, is_public, …"
+    ]
 
     var body: some View {
         AdminShell("CSV取り込み") {
             VStack(alignment: .leading, spacing: 14) {
                 Text("取り込み順序: グループ → 種類 → 商品").font(.headline)
-                HStack(spacing: 14) {
+                Text("列の順序は自由です。1行でもエラーがあれば、DBと画面のデータは一切変更しません。")
+                    .font(.caption).foregroundColor(.secondary)
+
+                HStack(alignment: .top, spacing: 14) {
                     ForEach(0..<3, id: \.self) { i in
                         Panel(title: titles[i]) {
-                            Text(files[i].isEmpty ? "（未選択）" : files[i]).foregroundColor(.secondary)
-                            Button("ファイルを選択") { files[i] = samples[i] }.buttonStyle(.app)
+                            Text(names[i].isEmpty ? "（未選択）" : names[i])
+                                .font(.callout)
+                                .lineLimit(2)
+                                .foregroundColor(names[i].isEmpty ? .secondary : .primary)
+                            Text(hints[i])
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .lineLimit(3)
+                            HStack(spacing: 8) {
+                                Button("ファイルを選択") {
+                                    importSlot = i
+                                    showImporter = true
+                                }
+                                .buttonStyle(.app)
+                                if !names[i].isEmpty {
+                                    Button("クリア") { clear(i) }
+                                        .buttonStyle(.app)
+                                }
+                            }
                         }
                     }
                 }
-                Toggle("既存商品の在庫をCSVの値で上書きする（明示選択時のみ。在庫管理なし型は対象外）", isOn: $overwriteStock)
-                Text("検証結果（1行でもエラーがあれば全体を取り込まない）").font(.headline)
-                TableRowView(cells: ["行番号", "列名", "理由"], widths: [80, 160, 460], header: true)
-                ForEach(errors) { e in
-                    TableRowView(cells: ["\(e.row)", e.column, e.reason], widths: [80, 160, 460])
-                }
-                if errors.isEmpty { Text("エラーなし").foregroundColor(.secondary) }
-                if overwriteStock {
-                    Text("在庫上書きの差分一覧（確認ダイアログを経て adjust で記録）").font(.headline)
-                    TableRowView(cells: ["商品ID", "現在庫", "CSV値", "差分"], widths: [120, 100, 100, 100], header: true)
-                    TableRowView(cells: ["MK-001", "12", "10", "-2"], widths: [120, 100, 100, 100])
-                    TableRowView(cells: ["MK-002", "8", "5", "-3"], widths: [120, 100, 100, 100])
-                }
+
+                Toggle("既存商品の在庫をCSVの値で上書きする（明示選択時のみ。在庫管理なし型は対象外）",
+                       isOn: $overwriteStock)
+                    .onChange(of: overwriteStock) { _, _ in validate() }
+
                 HStack(spacing: 10) {
-                    Button("検証エラーを消す（スタブ）") { errors = [] }.buttonStyle(.app)
-                    Button("取り込み実行") { vm.message = "取り込み（スタブ）" }
+                    Button("再検証") { validate() }.buttonStyle(.app)
+                    Button("取り込み実行") { showConfirm = true }
                         .buttonStyle(.appPrimary)
-                        .disabled(!errors.isEmpty)
+                        .disabled(!canImport)
+                    Button("空のCSV雛形を書き出す") {
+                        vm.exportCSVTemplates()
+                    }.buttonStyle(.app)
                     Button("キャンセル") { vm.exitAdmin() }.buttonStyle(.app)
                 }
-                .frame(maxWidth: 720)
+
+                Text("検証結果（行番号・列名・理由）").font(.headline)
+                if errors.isEmpty {
+                    if let plan {
+                        Text("エラーなし").foregroundColor(.green)
+                        Text(summaryText(plan))
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !plan.hasChanges {
+                            Text("CSVの内容に変更はありません").foregroundColor(.secondary)
+                        }
+                    } else {
+                        Text("CSVを選択してください").foregroundColor(.secondary)
+                    }
+                } else {
+                    TableRowView(cells: ["行番号", "列名", "理由"],
+                                 widths: [60, 140, 480], header: true)
+                    ForEach(errors) { e in
+                        TableRowView(cells: [e.row == 0 ? "―" : "\(e.row)", e.column, e.reason],
+                                     widths: [60, 140, 480])
+                    }
+                }
+
+                if overwriteStock {
+                    Text("在庫上書きの差分一覧（確認ダイアログを経て adjust で記録）").font(.headline)
+                    TableRowView(cells: ["商品ID", "現在庫", "CSV値", "差分"],
+                                 widths: [120, 100, 100, 100], header: true)
+                    let diffs = plan?.stockDiffs ?? []
+                    ForEach(diffs) { d in
+                        let delta = (d.delta > 0 ? "+" : "") + "\(d.delta)"
+                        TableRowView(cells: [d.productId, "\(d.current)", "\(d.csv)", delta],
+                                     widths: [120, 100, 100, 100])
+                    }
+                    if diffs.isEmpty {
+                        Text("差分なし").foregroundColor(.secondary)
+                    }
+                }
             }
+        }
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: [.commaSeparatedText, .plainText],
+                      allowsMultipleSelection: false) { result in
+            handleImport(result)
+        }
+        .alert("CSVを取り込みますか？", isPresented: $showConfirm) {
+            Button("取り込む") { performImport() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text(plan.map { summaryText($0) } ?? "")
+        }
+    }
+
+    private var canImport: Bool {
+        plan != nil && errors.isEmpty && (plan?.hasChanges ?? false)
+    }
+
+    private func summaryText(_ p: CSVImportPlan) -> String {
+        var lines = [
+            "グループ: 新規 \(p.newGroupCount)件 / 更新 \(p.updatedGroupCount)件",
+            "種類: 新規 \(p.newTypeCount)件 / 更新 \(p.updatedTypeCount)件",
+            "商品: 新規 \(p.newProductCount)件 / 更新 \(p.updatedProductCount)件",
+            "在庫変動ログ: \(p.movements.count)件"
+        ]
+        if !p.stockDiffs.isEmpty {
+            lines.append("在庫上書き: \(p.stockDiffs.count)件")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func validate() {
+        guard tables.contains(where: { $0 != nil }) else {
+            plan = nil
+            return
+        }
+        for i in 0..<3 where !names[i].isEmpty && tables[i] == nil {
+            errors = [CSVError(row: 0, column: "CSV",
+                               reason: "\(names[i]) を読み込めません。ファイルを選び直してください")]
+            plan = nil
+            return
+        }
+        let outcome = vm.makeCSVImportPlan(groupCSV: tables[0],
+                                           typeCSV: tables[1],
+                                           productCSV: tables[2],
+                                           overwriteStock: overwriteStock)
+        errors = outcome.errors
+        plan = outcome.plan
+    }
+
+    private func clear(_ slot: Int) {
+        tables[slot] = nil
+        names[slot] = ""
+        errors = []
+        plan = nil
+        validate()
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard let slot = importSlot else { return }
+        defer { importSlot = nil }
+
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                let table = try CSVImportParser.parse(data)
+                tables[slot] = table
+                names[slot] = url.lastPathComponent
+                errors = []
+                plan = nil
+                validate()
+            } catch let e as CSVParseError {
+                tables[slot] = nil
+                names[slot] = url.lastPathComponent
+                errors = [e.csvError]
+                plan = nil
+            } catch {
+                tables[slot] = nil
+                names[slot] = url.lastPathComponent
+                errors = [CSVError(row: 0, column: "ファイル",
+                                   reason: "読み込めません: \(error.localizedDescription)")]
+                plan = nil
+            }
+        case .failure(let error):
+            let ns = error as NSError
+            if ns.code != NSUserCancelledError {
+                errors = [CSVError(row: 0, column: "ファイル",
+                                   reason: error.localizedDescription)]
+                plan = nil
+            }
+        }
+    }
+
+    private func performImport() {
+        guard let plan else { return }
+        let result = vm.applyCSVImport(plan)
+        if result.isEmpty {
+            errors = []
+            tables = [nil, nil, nil]
+            names = ["", "", ""]
+            self.plan = nil
+            overwriteStock = false
+        } else {
+            errors = result
         }
     }
 }
@@ -702,6 +864,9 @@ struct ReportView: View {
                 }
                 HStack(spacing: 10) {
                     Button("sats照合一覧") { vm.go(.salesHistory) }.buttonStyle(.app)
+                    Button("sats照合CSV（PIN）") {
+                        vm.requirePin("sats照合CSV") { vm.exportSatsReconciliation(from: start, to: end) }
+                    }.buttonStyle(.app)
                     Button("グループ別精算CSV（PIN）") {
                         vm.requirePin("グループ別精算CSV") { vm.exportSettlement(from: start, to: end) }
                     }.buttonStyle(.app)

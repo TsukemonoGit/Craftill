@@ -184,6 +184,7 @@ func registerInitialStock(_ newProducts: [Product],
         if let ti = types.firstIndex(where: { $0.typeId == p.typeId }),
            let n = productNumber(of: p.id, in: types[ti]) {
             types[ti].nextNo = max(types[ti].nextNo, n + 1)     // 高水位。減らさない
+            types[ti].updatedAt = at
         }
         guard p.managesStock(in: types), let stock = p.stock, stock > 0 else { continue }
         movements.append(StockMovement(
@@ -668,6 +669,12 @@ func editProduct(productId: String, name: String, priceJpy: Int, priceSats: Int?
 struct CSVTable {
     var headers: [String]
     var rows: [[String: String]]
+    /// 各行のCSV上の開始行番号（ヘッダ行は含まない）。空行を飛ばしても行番号がずれないようにする。
+    var lines: [Int] = []
+
+    func lineNumber(at index: Int) -> Int {
+        lines.indices.contains(index) ? lines[index] : index + 2
+    }
 }
 
 /// CSV の問題1件。`row` は CSV 上の行番号（ヘッダ行が 1、データは 2 から）
@@ -706,7 +713,7 @@ func parseGroupCSV(_ t: CSVTable) -> (groups: [ProductGroup], issues: [Validatio
     var seen = Set<String>()
     for (i, row) in t.rows.enumerated() {
         if isBlank(row) { continue }
-        let n = i + 2
+        let n = t.lineNumber(at: i)
         let gid = cell(row, "group_id"), label = cell(row, "label")
         for f in validateGroupFields(groupId: gid, label: label) {
             issues.append(ValidationIssue(row: n, column: f.column, reason: f.reason))
@@ -753,10 +760,11 @@ func parseTypeCSV(_ t: CSVTable,
     var out: [ParsedType] = []
     var seenIds = Set<String>()
     var seenPrefix: [String: String] = [:]      // 接頭辞 → type_id
+    var rowByTypeId: [String: Int] = [:]
 
     for (i, row) in t.rows.enumerated() {
         if isBlank(row) { continue }
-        let n = i + 2
+        let n = t.lineNumber(at: i)
         func bad(_ col: String, _ why: String) {
             issues.append(ValidationIssue(row: n, column: col, reason: why))
         }
@@ -775,19 +783,27 @@ func parseTypeCSV(_ t: CSVTable,
                                     idDigits: digits, labels: labels) {
             bad(f.column, f.reason)
         }
-        if !typeId.isEmpty, !seenIds.insert(typeId).inserted { bad("type_id", "ファイル内で重複") }
+        if !typeId.isEmpty {
+            rowByTypeId[typeId] = n
+            if !seenIds.insert(typeId).inserted { bad("type_id", "ファイル内で重複") }
+        }
         if !prefix.isEmpty {
             if let owner = seenPrefix[prefix], owner != typeId { bad("id_prefix", "ファイル内で重複（\(owner)）") }
             seenPrefix[prefix] = typeId
-            if let other = existing.first(where: { $0.idPrefix == prefix && $0.typeId != typeId }) {
-                bad("id_prefix", "既存の種類と重複（\(other.typeId)）")
-            }
         }
         if !gid.isEmpty, !groups.contains(where: { $0.groupId == gid }) {
             bad("group_id", "グループに存在しません")
         }
 
         let old = existing.first { $0.typeId == typeId }
+
+        // 値のある属性がある商品のラベルは外せない（編集画面と同じ扱い）
+        if let o = old {
+            for k in 0..<3 where labels[k] == nil
+                && inventory.contains(where: { $0.typeId == o.typeId && $0.attrs[k] != nil }) {
+                bad("attr_label_\(k + 1)", "値のある商品があるため空にできません")
+            }
+        }
 
         // next_no（A-1）
         var csvNext: Int? = nil
@@ -824,6 +840,21 @@ func parseTypeCSV(_ t: CSVTable,
             out.append(ParsedType(type: pt, csvNextNo: csvNext))
         }
     }
+
+    // 取り込み後の状態で接頭辞の一意性を確認する。
+    // これにより、同じCSV内で接頭辞を入れ替えるような更新も正しく判定できる。
+    var finalByPrefix: [String: [String]] = [:]
+    var final = Dictionary(uniqueKeysWithValues: existing.map { ($0.typeId, $0) })
+    for p in out { final[p.type.typeId] = p.type }
+    for t in final.values { finalByPrefix[t.idPrefix, default: []].append(t.typeId) }
+    for (prefix, ids) in finalByPrefix where ids.count > 1 {
+        for id in ids where rowByTypeId[id] != nil {
+            issues.append(ValidationIssue(row: rowByTypeId[id] ?? 0,
+                                          column: "id_prefix",
+                                          reason: "接頭辞が重複しています（\(prefix)）"))
+        }
+    }
+
     return (issues.isEmpty ? out : [], issues)
 }
 
@@ -835,12 +866,14 @@ func resolveNextNo(csv: Int?, current: ProductType?, maxExisting: Int) -> Int {
     return max(base, n)
 }
 
-func applyTypes(_ parsed: [ParsedType], types: inout [ProductType], inventory: [Product]) {
+func applyTypes(_ parsed: [ParsedType], types: inout [ProductType],
+                inventory: [Product], at: Date = Date()) {
     for p in parsed {
         let old = types.first { $0.typeId == p.type.typeId }
         var t = p.type
         let maxNo = old.map { maxProductNumber(of: $0, in: inventory) } ?? 0
         t.nextNo = resolveNextNo(csv: p.csvNextNo, current: old, maxExisting: maxNo)
+        t.updatedAt = at
         if let i = types.firstIndex(where: { $0.typeId == t.typeId }) {
             types[i] = t
         } else {
@@ -868,7 +901,7 @@ func parseProductCSV(_ t: CSVTable,
 
     for (i, row) in t.rows.enumerated() {
         if isBlank(row) { continue }
-        let n = i + 2
+        let n = t.lineNumber(at: i)
         func bad(_ col: String, _ why: String) {
             issues.append(ValidationIssue(row: n, column: col, reason: why))
         }
@@ -935,7 +968,9 @@ func applyProductMaster(_ parsed: [Product],
                         overwriteStock: Bool,
                         at: Date) {
     var fresh: [Product] = []
-    for p in parsed {
+    for parsedProduct in parsed {
+        var p = parsedProduct
+        p.updatedAt = at
         guard let i = inventory.firstIndex(where: { $0.id == p.id }) else {
             fresh.append(p)
             continue
@@ -945,6 +980,7 @@ func applyProductMaster(_ parsed: [Product],
         inventory[i].priceSats = p.priceSats
         inventory[i].attr1 = p.attr1; inventory[i].attr2 = p.attr2; inventory[i].attr3 = p.attr3
         inventory[i].isPublic = p.isPublic
+        inventory[i].updatedAt = at
 
         if overwriteStock,
            inventory[i].managesStock(in: types),

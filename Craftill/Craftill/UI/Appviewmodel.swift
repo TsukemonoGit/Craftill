@@ -815,6 +815,73 @@ final class AppViewModel: ObservableObject {
 
     var productsWithoutImage: [Product] { inventory.filter { $0.imageRef == nil } }
 
+    // MARK: CSV取り込み（A-1 / P4）
+
+    /// 画面で検証・差分表示するための計画。この時点ではDBもメモリも変更しない。
+    func makeCSVImportPlan(groupCSV: CSVTable?, typeCSV: CSVTable?,
+                            productCSV: CSVTable?, overwriteStock: Bool) -> CSVImportOutcome {
+        CSVImportPlanner.plan(groupCSV: groupCSV,
+                              typeCSV: typeCSV,
+                              productCSV: productCSV,
+                              existingGroups: groups,
+                              existingTypes: types,
+                              existingProducts: inventory,
+                              existingItems: saleItems,
+                              overwriteStock: overwriteStock)
+    }
+
+    /// 検証済みの計画を、1トランザクションでDBへ反映する。
+    func applyCSVImport(_ plan: CSVImportPlan) -> [CSVError] {
+        guard plan.hasChanges else {
+            message = "CSVの内容に変更はありません"
+            return []
+        }
+        guard let db else {
+            return [CSVError(row: 0, column: "DB", reason: "データベースを開けません")]
+        }
+
+        let sequencerBefore = ids
+        let newMovements = plan.movements.map {
+            StockMovement(id: ids.nextMovementID(), productId: $0.productId,
+                          delta: $0.delta, reason: $0.reason, saleId: nil, at: plan.at)
+        }
+        do {
+            try db.persistImport(groups: plan.changedGroups,
+                                 types: plan.changedTypes,
+                                 products: plan.changedProducts,
+                                 movements: newMovements)
+        } catch {
+            // 失敗時は採番を巻き戻し、在庫変動IDに欠番を作らない。
+            ids = sequencerBefore
+            return [CSVError(row: 0, column: "DB",
+                             reason: "取り込みを保存できませんでした: \(error.localizedDescription)")]
+        }
+
+        groups = plan.groups
+        types = plan.types
+        inventory = plan.products
+        movements.append(contentsOf: newMovements)
+        if !types.contains(where: { $0.typeId == selectedTypeId }) {
+            selectedTypeId = types.first?.typeId ?? ""
+        }
+
+        var parts = ["CSVを取り込みました"]
+        if plan.newGroupCount + plan.updatedGroupCount > 0 {
+            parts.append("グループ 新規\(plan.newGroupCount)・更新\(plan.updatedGroupCount)")
+        }
+        if plan.newTypeCount + plan.updatedTypeCount > 0 {
+            parts.append("種類 新規\(plan.newTypeCount)・更新\(plan.updatedTypeCount)")
+        }
+        if plan.newProductCount + plan.updatedProductCount > 0 {
+            parts.append("商品 新規\(plan.newProductCount)・更新\(plan.updatedProductCount)")
+        }
+        if !plan.stockDiffs.isEmpty {
+            parts.append("在庫上書き \(plan.stockDiffs.count)件")
+        }
+        message = parts.joined(separator: " / ")
+        return []
+    }
+
     // MARK: 集計
 
     func completedSales(from: Date, to: Date) -> [Sale] {
@@ -836,6 +903,17 @@ final class AppViewModel: ObservableObject {
             let d = DayKey.string(from: at)
             return d >= a && d <= b
         }
+    }
+
+    /// sats照合CSVの対象。完了したsats会計と、sats確認済みで中断した会計（A-8）。
+    func satsReconciliationSales(from: Date, to: Date) -> [Sale] {
+        (completedSales(from: from, to: to)
+            + voidedSales(from: from, to: to, confirmedOnly: true))
+            .filter { $0.totalSats != nil }
+            .sorted {
+                ($0.completedAt ?? $0.confirmedAt ?? .distantPast)
+                    < ($1.completedAt ?? $1.confirmedAt ?? .distantPast)
+            }
     }
 
     func reportRows(from: Date, to: Date) -> [ReportRow] {
@@ -961,10 +1039,44 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// 取り込み用の空CSV雛形（A-18）。ヘッダだけの3ファイルを書き出す。
+    @MainActor
+    func exportCSVTemplates() {
+        guard let dir = CSVExportPanel.chooseDirectory() else { return }
+        let folder = dir.appendingPathComponent("craftill-csv-template", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let files: [(String, String)] = [
+                ("product_groups.csv", CSVExport.groupsCSV([])),
+                ("product_types.csv", CSVExport.typesCSV([])),
+                ("products.csv", CSVExport.productsCSV([]))
+            ]
+            for (name, csv) in files {
+                try Data(csv.utf8).write(to: folder.appendingPathComponent(name), options: .atomic)
+            }
+            CSVExportPanel.finish(folder: folder)
+            message = CSVExportPanel.usesShareSheet
+                ? "CSV雛形を共有しました"
+                : "CSV雛形を書き出しました: \(folder.lastPathComponent)"
+        } catch {
+            message = "CSV雛形の書き出しに失敗しました: \(error.localizedDescription)"
+        }
+    }
+
     @MainActor
     func exportSettlement(from: Date, to: Date) {
         let csv = CSVExport.settlementCSV(reportRows(from: from, to: to))
         if let url = CSVExportPanel.save(csv, suggestedName: "settlement.csv") {
+            message = CSVExportPanel.usesShareSheet
+                ? "共有シートを開きました"
+                : "保存しました: \(url.lastPathComponent)"
+        }
+    }
+
+    @MainActor
+    func exportSatsReconciliation(from: Date, to: Date) {
+        let csv = CSVExport.satsReconciliationCSV(satsReconciliationSales(from: from, to: to))
+        if let url = CSVExportPanel.save(csv, suggestedName: "sats_reconciliation.csv") {
             message = CSVExportPanel.usesShareSheet
                 ? "共有シートを開きました"
                 : "保存しました: \(url.lastPathComponent)"

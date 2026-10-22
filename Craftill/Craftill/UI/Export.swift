@@ -43,25 +43,37 @@ enum CSVExport {
     }
 
     static func typesCSV(_ types: [ProductType]) -> String {
+        // 取り込みCSVと同一の列構成（A-1 / A-8）。updated_at は含めない。
         table([[
             "type_id", "name", "id_prefix", "id_digits", "stock_mode",
             "attr_label_1", "attr_label_2", "attr_label_3",
-            "group_id", "next_no", "updated_at"
+            "group_id", "next_no"
         ]] + types.map {
             [$0.typeId, $0.name, $0.idPrefix, String($0.idDigits), $0.stockMode.rawValue,
              $0.attrLabel1 ?? "", $0.attrLabel2 ?? "", $0.attrLabel3 ?? "",
-             $0.groupId ?? "", String($0.nextNo), date($0.updatedAt)]
+             $0.groupId ?? "", String($0.nextNo)]
         })
     }
 
     static func productsCSV(_ products: [Product]) -> String {
+        // 取り込みCSVと同一の列構成。image_ref / updated_at はJSON側にだけ含める。
         table([[
             "product_id", "type_id", "name", "price_jpy", "price_sats", "stock",
-            "attr_1", "attr_2", "attr_3", "image_ref", "is_public", "updated_at"
+            "attr_1", "attr_2", "attr_3", "is_public"
         ]] + products.map {
             [$0.id, $0.typeId, $0.name, String($0.priceJpy), int($0.priceSats), int($0.stock),
-             $0.attr1 ?? "", $0.attr2 ?? "", $0.attr3 ?? "", $0.imageRef ?? "",
-             $0.isPublic ? "1" : "0", date($0.updatedAt)]
+             $0.attr1 ?? "", $0.attr2 ?? "", $0.attr3 ?? "", $0.isPublic ? "1" : "0"]
+        })
+    }
+
+    /// sats照合CSV（A-8）。`total_jpy` は併用会計の現金分だけ。
+    static func satsReconciliationCSV(_ sales: [Sale]) -> String {
+        table([[
+            "sale_id", "status", "completed_at", "confirmed_at",
+            "total_sats", "total_jpy", "refunded"
+        ]] + sales.map {
+            [$0.id, $0.status.rawValue, date($0.completedAt), date($0.confirmedAt),
+             int($0.totalSats), int($0.totalJpy), $0.refunded ? "1" : "0"]
         })
     }
 

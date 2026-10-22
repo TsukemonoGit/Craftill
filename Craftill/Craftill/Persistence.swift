@@ -615,6 +615,18 @@ final class Database {
         }
     }
 
+    /// CSV取り込み（グループ・種類・商品・在庫変動）を1トランザクションで保存する。
+    /// 1件でも失敗したら、すべてロールバックする。
+    func persistImport(groups: [ProductGroup], types: [ProductType],
+                       products: [Product], movements: [StockMovement]) throws {
+        try transaction {
+            for g in groups { try save(group: g) }
+            for t in types { try save(type: t) }
+            for p in products { try save(product: p) }
+            for m in movements { try save(movement: m) }
+        }
+    }
+
     func save(sync: SyncLogEntry) throws {
         try run("""
         INSERT OR REPLACE INTO sync_log (id, at, result, detail)
