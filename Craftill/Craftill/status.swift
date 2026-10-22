@@ -1,3 +1,4 @@
+import Foundation
 
 /// 確認ダイアログに出すもの
 struct ConfirmReason: Equatable {
@@ -224,6 +225,8 @@ extension SaleContext {
 /// 会計の文脈をファイルへ保存・復元する。**失敗は `throws` で外へ出す**（黙って捨てない）
 struct SaleContextStore {
     let url: URL
+    let encoder = JSONEncoder()
+    let decoder = JSONDecoder()
 
     init(url: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                           .appendingPathComponent("saleContext.json")) {
@@ -232,7 +235,7 @@ struct SaleContextStore {
 
     /// 更新のたびに呼ぶ
     func save(_ ctx: SaleContext) throws {
-        let data = try jsonEncoder.encode(ctx)      // base/2 の encoder（ISO 8601）
+        let data = try encoder.encode(ctx)      // base/2 の encoder（ISO 8601）
         try data.write(to: url, options: .atomic)   // ← 途中で落ちても壊れない
     }
 
@@ -240,7 +243,7 @@ struct SaleContextStore {
     func load() throws -> SaleContext? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
-        return try jsonDecoder.decode(SaleContext.self, from: data)
+        return try decoder.decode(SaleContext.self, from: data)
     }
 
     /// 完了・記録に残らない中断のあと（A-3）
