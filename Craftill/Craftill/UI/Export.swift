@@ -111,10 +111,13 @@ enum CSVExport {
         })
     }
 
-    static func settlementCSV(_ rows: [ReportRow]) -> String {
-        table([[
+    /// グループ別精算CSV（A-8）。期間は端末のローカル日付（yyyyMMdd）で出力する。
+    static func settlementCSV(_ rows: [ReportRow], from: Date, to: Date) -> String {
+        let start = DayKey.string(from: min(from, to))
+        let end = DayKey.string(from: max(from, to))
+        return table([[
             "group_id", "group_label", "item_type", "type_id", "paid_in",
-            "lines", "qty", "amount"
+            "line_count", "qty", "amount", "period_start", "period_end"
         ]] + rows.map {
             // ReportRow.id は「group|区分|種類|paid_in」で作っている
             let parts = $0.id.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
@@ -122,7 +125,7 @@ enum CSVExport {
             let itemType = parts.indices.contains(1) ? parts[1] : ""
             let typeId = parts.indices.contains(2) ? parts[2] : ""
             return [groupId, $0.groupLabel, itemType, typeId, $0.paidIn.rawValue,
-                    String($0.lines), String($0.qty), String($0.amount)]
+                    String($0.lines), String($0.qty), String($0.amount), start, end]
         })
     }
 

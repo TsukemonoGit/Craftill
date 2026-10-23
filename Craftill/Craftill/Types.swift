@@ -101,6 +101,16 @@ struct Product: Codable, Equatable, Identifiable {
         }
         return parts.joined(separator: " ")
     }
+
+    /// 同梱画像が実在するか（A-1、A-17）。
+    /// `image_ref` が非 nil でもファイルが無ければ「画像なし」として扱う。
+    var hasBundledImage: Bool {
+        guard let imageRef, !imageRef.isEmpty,
+              let url = Bundle.main.url(forResource: imageRef, withExtension: nil) else {
+            return false
+        }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -371,6 +381,9 @@ struct IdSequencer {
         adhocSeq += 1
         return "ADHOC-" + pad(adhocSeq, 2)
     }
+
+    /// 野良IDの高水位。再起動後も再利用しないために保存する（A-1）。
+    var adhocHighWater: Int { adhocSeq }
 
     /// 商品IDを作る（A-1）。`nextNo` が `idDigits` の桁数を超える場合は nil（追加しない）。
     /// **この関数は状態を変えない。** 呼び出し側が、成功時に `nextNo += 1` を

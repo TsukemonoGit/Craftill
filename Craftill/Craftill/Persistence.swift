@@ -66,7 +66,10 @@ final class Database {
         db = handle
         try exec("PRAGMA foreign_keys = ON;")
         try migrate()
+        // テスト商品はデバッグビルドだけに入れる。本番は空のDBで開始する（A-1、A-16）。
+        #if DEBUG
         try seedIfNeeded()
+        #endif
     }
 
     deinit {

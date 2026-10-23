@@ -144,6 +144,9 @@ final class AppViewModel: ObservableObject {
     private let defaults = UserDefaults.standard
     private var cancellables = Set<AnyCancellable>()
     private static let activeSaleKey = "craftill.activeSale"
+    private static let adhocSeqKey = "craftill.adhocSeq"
+    /// `requirePinWithValue` で、検証済みの PIN を操作へ渡すために保持する。
+    private var verifiedPin = ""
 
     init() {
         pin = PinStore.load()
@@ -195,9 +198,12 @@ final class AppViewModel: ObservableObject {
         }
         let movementSeq = movements.compactMap { Int($0.id.dropFirst(2)) }.max() ?? 0
         let logSeq = syncLog.compactMap { Int($0.id.dropFirst(2)) }.max() ?? 0
-        let adhocSeq = cart.filter { $0.isAdhoc }
+        let cartAdhocSeq = cart.filter { $0.isAdhoc }
             .compactMap { Int($0.id.replacingOccurrences(of: "ADHOC-", with: "")) }
             .max() ?? 0
+        // 野良行を削除して再起動しても、採番済みの番号を再利用しない（A-1）。
+        let storedAdhocSeq = UserDefaults.standard.integer(forKey: adhocSeqKey)
+        let adhocSeq = max(cartAdhocSeq, storedAdhocSeq)
         return IdSequencer(saleCounters: counters, movementSeq: movementSeq,
                            logSeq: logSeq, adhocSeq: adhocSeq)
     }
@@ -341,8 +347,17 @@ final class AppViewModel: ObservableObject {
         pinPrompt = PinPrompt(title: title, onSuccess: action)
     }
 
+    /// PIN 入力後に、検証済みの PIN を渡して実行する。
+    /// VM 側でも PIN を再検証する操作（返金済み設定・在庫調整）に使う（A-11）。
+    func requirePinWithValue(_ title: String, _ action: @escaping (String) -> Void) {
+        pinPrompt = PinPrompt(title: title) { [weak self] in
+            action(self?.verifiedPin ?? "")
+        }
+    }
+
     func submitPin(_ s: String) {
         if verifyPin(s) {
+            verifiedPin = s
             let action = pinPrompt?.onSuccess
             pinPrompt = nil
             action?()
@@ -404,7 +419,19 @@ final class AppViewModel: ObservableObject {
     func normalizeID(_ raw: String) -> String {
         let half = raw.applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? raw
         let s = half.uppercased().filter { !$0.isWhitespace }
-        if s.contains("-") { return s }
+
+        // 「接頭辞-番号」は、ハイフンの有無にかかわらず同じ規則でゼロ埋めする（A-2）。
+        // 例: `mk-8` → `MK-008`。以前はハイフン付き入力をそのまま返していた。
+        let parts = s.split(separator: "-", omittingEmptySubsequences: true).map(String.init)
+        if parts.count >= 2, let n = Int(parts[parts.count - 1]) {
+            let prefix = parts.dropLast().joined(separator: "-")
+            if let t = types.first(where: { $0.idPrefix.uppercased() == prefix }) {
+                let num = String(n)
+                return "\(t.idPrefix)-" + String(repeating: "0", count: max(0, t.idDigits - num.count)) + num
+            }
+            return s
+        }
+
         for t in types.sorted(by: { $0.idPrefix.count > $1.idPrefix.count }) where s.hasPrefix(t.idPrefix) {
             let rest = String(s.dropFirst(t.idPrefix.count))
             if let n = Int(rest) {
@@ -462,6 +489,7 @@ final class AppViewModel: ObservableObject {
                                   name: name.isEmpty ? "野良" : name,
                                   priceJpy: priceJpy, priceSats: priceSats,
                                   groupId: groupId, qty: qty)
+        defaults.set(ids.adhocHighWater, forKey: Self.adhocSeqKey)
         cart.append(line)
         if saleState == .idle { saleState = .scanning }
         message = "\(line.name) を追加しました"
@@ -500,13 +528,13 @@ final class AppViewModel: ObservableObject {
     func pressKey(_ k: String) {
         switch k {
         case "C": cashReceived = 0
-        case "00": cashReceived = min(cashReceived * 100, 9_999_999)
+        case "00": cashReceived *= 100
         default:
-            if let d = Int(k) { cashReceived = min(cashReceived * 10 + d, 9_999_999) }
+            if let d = Int(k) { cashReceived = cashReceived * 10 + d }
         }
     }
 
-    func addCash(_ n: Int) { cashReceived = min(cashReceived + n, 9_999_999) }
+    func addCash(_ n: Int) { cashReceived += n }
 
     func confirmCash() {
         guard canConfirmCash else { return }
@@ -658,26 +686,49 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func toggleRefunded(_ id: String) {
+    func toggleRefunded(_ id: String, pin entered: String) {
         guard let i = sales.firstIndex(where: { $0.id == id }) else { return }
-        sales[i].refunded.toggle()
-        try? db?.persistSale(sales[i])
+        let old = sales[i].refunded
+        let result = setRefunded(saleId: id, value: !old,
+                                 correctPIN: pin ?? "", pin: entered, sales: &sales)
+        switch result {
+        case .failure(let m):
+            message = m
+        case .success(let m):
+            do {
+                try db?.persistSale(sales[i])
+                message = m
+            } catch {
+                sales[i].refunded = old
+                message = "返金済みフラグを保存できませんでした: \(error.localizedDescription)"
+            }
+        }
     }
 
-    func performStockAdjustment(productId: String, newStock: Int, reason: String) -> String? {
+    func performStockAdjustment(productId: String, newStock: Int, reason: String,
+                                pin entered: String) -> String? {
         guard !reason.trimmingCharacters(in: .whitespaces).isEmpty else { return "理由は必須です" }
         let before = movements.count
-        let currentPIN = pin ?? ""
+        let inventoryBefore = inventory
+        let movementsBefore = movements
+        let idsBefore = ids
         let result = adjustStock(productId: productId, newStock: newStock, reason: reason,
-                                 correctPIN: currentPIN, pin: currentPIN,
+                                 correctPIN: pin ?? "", pin: entered,
                                  inventory: &inventory, movements: &movements,
                                  ids: &ids, types: types, at: Date())
         switch result {
         case .failure(let m):
             return m
         case .success(let memo):
-            try? db?.persistAdjust(inventory: inventory,
-                                   movements: Array(movements[before...]))
+            do {
+                try db?.persistAdjust(inventory: inventory,
+                                      movements: Array(movements[before...]))
+            } catch {
+                inventory = inventoryBefore
+                movements = movementsBefore
+                ids = idsBefore
+                return "在庫調整を保存できませんでした: \(error.localizedDescription)"
+            }
             return memo == "変化なし" ? nil : nil
         }
     }
@@ -737,11 +788,34 @@ final class AppViewModel: ObservableObject {
         return nil
     }
 
-    func updateType(typeId: String, name: String, labels: [String], groupId: String) -> String? {
+    func updateType(typeId: String, name: String, prefix: String, digits: Int, mode: StockMode,
+                    labels: [String], groupId: String) -> String? {
         guard let i = types.firstIndex(where: { $0.typeId == typeId }) else { return "種類がありません" }
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return "表示名は必須です" }
+        guard prefix.range(of: "^[A-Z0-9]+$", options: .regularExpression) != nil else { return "接頭辞は半角英大文字・数字のみ" }
+        guard digits >= 1 else { return "桁数は1以上" }
         guard labelsPacked(labels) else { return "属性ラベルは左から詰めてください" }
+
+        // 接頭辞・桁数・在庫モードは、商品または販売記録がある種類では変更できない（A-1）。
+        if isTypeLocked(typeId) {
+            guard prefix == types[i].idPrefix,
+                  digits == types[i].idDigits,
+                  mode == types[i].stockMode else {
+                return "商品または販売記録がある種類は、接頭辞・桁数・在庫の扱いを変更できません"
+            }
+        } else {
+            guard digits >= String(types[i].nextNo).count else {
+                return "桁数が next_no より小さいため変更できません"
+            }
+            guard !types.contains(where: { $0.typeId != typeId && $0.idPrefix == prefix }) else {
+                return "接頭辞が重複しています"
+            }
+        }
+
         types[i].name = name
+        types[i].idPrefix = prefix
+        types[i].idDigits = digits
+        types[i].stockMode = mode
         types[i].attrLabel1 = labels[0].isEmpty ? nil : labels[0]
         types[i].attrLabel2 = labels[1].isEmpty ? nil : labels[1]
         types[i].attrLabel3 = labels[2].isEmpty ? nil : labels[2]
@@ -813,7 +887,9 @@ final class AppViewModel: ObservableObject {
         return nil
     }
 
-    var productsWithoutImage: [Product] { inventory.filter { $0.imageRef == nil } }
+    /// 画像ファイルが同梱されていない登録商品（A-1）。
+    /// `image_ref` の有無ではなく、バンドル内に実ファイルがあるかで判定する。
+    var productsWithoutImage: [Product] { inventory.filter { !$0.hasBundledImage } }
 
     // MARK: CSV取り込み（A-1 / P4）
 
@@ -905,10 +981,12 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    /// sats照合CSVの対象。完了したsats会計と、sats確認済みで中断した会計（A-8）。
+    /// sats照合CSVの対象。完了したsats会計、sats確認済みで中断した会計、
+    /// 完了後に取り消したsats会計（返金確認用）を含める（A-8、A-9）。
     func satsReconciliationSales(from: Date, to: Date) -> [Sale] {
         (completedSales(from: from, to: to)
-            + voidedSales(from: from, to: to, confirmedOnly: true))
+            + voidedSales(from: from, to: to, confirmedOnly: true)
+            + voidedSales(from: from, to: to, confirmedOnly: false))
             .filter { $0.totalSats != nil }
             .sorted {
                 ($0.completedAt ?? $0.confirmedAt ?? .distantPast)
@@ -965,6 +1043,8 @@ final class AppViewModel: ObservableObject {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
+            // A-13 の列名（snake_case）に合わせる。`sale_id` などの明示キーはそのまま。
+            encoder.keyEncodingStrategy = .convertToSnakeCase
             let jsonGroups = try encoder.encode(groups)
             let jsonTypes = try encoder.encode(types)
             let jsonProducts = try encoder.encode(inventory)
@@ -1025,6 +1105,8 @@ final class AppViewModel: ObservableObject {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             encoder.dateEncodingStrategy = .iso8601
+            // A-13 の列名（snake_case）に合わせる。`sale_id` などの明示キーはそのまま。
+            encoder.keyEncodingStrategy = .convertToSnakeCase
             try encoder.encode(groups).write(to: folder.appendingPathComponent("product_groups.json"), options: .atomic)
             try encoder.encode(types).write(to: folder.appendingPathComponent("product_types.json"), options: .atomic)
             try encoder.encode(inventory).write(to: folder.appendingPathComponent("products.json"), options: .atomic)
@@ -1065,7 +1147,7 @@ final class AppViewModel: ObservableObject {
 
     @MainActor
     func exportSettlement(from: Date, to: Date) {
-        let csv = CSVExport.settlementCSV(reportRows(from: from, to: to))
+        let csv = CSVExport.settlementCSV(reportRows(from: from, to: to), from: from, to: to)
         if let url = CSVExportPanel.save(csv, suggestedName: "settlement.csv") {
             message = CSVExportPanel.usesShareSheet
                 ? "共有シートを開きました"

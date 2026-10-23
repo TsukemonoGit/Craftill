@@ -300,7 +300,7 @@ struct TypeEditor: View {
                 ForEach(vm.types) { t in
                     typeRow(t)
                 }
-                Text("編集可（既存）: 表示名・属性ラベル・グループ。種類ID・接頭辞・桁数・在庫の扱いは変更不可。next_no は減らさない。")
+                Text("編集可（既存）: 表示名・属性ラベル・グループ。接頭辞・桁数・在庫の扱いは、商品または販売記録がある種類では変更不可。next_no は減らさない。")
                     .font(.caption).foregroundColor(.secondary)
             }
         } second: {
@@ -309,8 +309,8 @@ struct TypeEditor: View {
                 LabeledField(label: "表示名", text: $name, required: true)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
                           alignment: .leading, spacing: 8) {
-                    LabeledField(label: "ID接頭辞（種類間で一意）", text: $prefix, required: true, disabled: editingId != nil)
-                    LabeledField(label: "ID桁数", text: $digitsText, required: true, disabled: editingId != nil)
+                    LabeledField(label: "ID接頭辞（種類間で一意）", text: $prefix, required: true, disabled: locked)
+                    LabeledField(label: "ID桁数", text: $digitsText, required: true, disabled: locked)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("在庫の扱い").font(.caption).foregroundColor(.secondary)
@@ -318,7 +318,7 @@ struct TypeEditor: View {
                         ForEach(StockMode.allCases, id: \.self) { m in Text(m.label).tag(m) }
                     }
                     .labelsHidden()
-                    .disabled(editingId != nil)
+                    .disabled(locked)
                 }
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 8)],
                           alignment: .leading, spacing: 8) {
@@ -383,7 +383,8 @@ struct TypeEditor: View {
     private func save() {
         let err: String?
         if let id = editingId {
-            err = vm.updateType(typeId: id, name: name, labels: [l1, l2, l3], groupId: groupId)
+            err = vm.updateType(typeId: id, name: name, prefix: prefix, digits: Int(digitsText) ?? 0,
+                                mode: mode, labels: [l1, l2, l3], groupId: groupId)
         } else {
             err = vm.addType(typeId: typeId, name: name, prefix: prefix, digits: Int(digitsText) ?? 0, mode: mode,
                              labels: [l1, l2, l3], groupId: groupId, nextNo: Int(nextNoText) ?? 0)
@@ -1056,10 +1057,10 @@ struct SalesHistoryView: View {
             .buttonStyle(.app)
             .disabled(s.status != .completed)
             Button("返金済み設定（PIN）") {
-                vm.requirePin("返金済み設定") { vm.toggleRefunded(s.id) }
+                vm.requirePinWithValue("返金済み設定") { entered in vm.toggleRefunded(s.id, pin: entered) }
             }
             .buttonStyle(.app)
-            .disabled(s.totalSats == nil)
+            .disabled(s.status != .voided || s.totalSats == nil)
         }
         if compact {
             VStack(alignment: .leading, spacing: 6) {
@@ -1079,10 +1080,10 @@ struct SalesHistoryView: View {
                 }
                 VStack(spacing: 6) {
                     Button("返金済み設定（PIN）") {
-                        vm.requirePin("返金済み設定") { vm.toggleRefunded(s.id) }
+                        vm.requirePinWithValue("返金済み設定") { entered in vm.toggleRefunded(s.id, pin: entered) }
                     }
                     .buttonStyle(.app).frame(minWidth: 120, maxWidth: 180)
-                    .disabled(s.totalSats == nil)
+                    .disabled(s.status != .voided || s.totalSats == nil)
                 }
             }
         }
@@ -1155,8 +1156,9 @@ struct StockAdjustView: View {
         guard let n = Int(newStockText) else { return }
         let pid = productId
         let reasonText = reason
-        vm.requirePin("在庫調整") {
-            if let err = vm.performStockAdjustment(productId: pid, newStock: n, reason: reasonText) {
+        vm.requirePinWithValue("在庫調整") { entered in
+            if let err = vm.performStockAdjustment(productId: pid, newStock: n,
+                                                   reason: reasonText, pin: entered) {
                 vm.message = err
                 return
             }
@@ -1183,7 +1185,9 @@ struct PriceListView: View {
                         TableRowView(cells: [p.id, p.typeId, p.name, "\(p.priceJpy)", p.priceSats.map { "\($0)" } ?? "（空）"],
                                      widths: [90, 100, 180, 80, 90])
                     }
-                    Button("価格一覧CSV出力") { vm.exportPriceList() }
+                    Button("価格一覧CSV出力") {
+                        vm.requirePin("価格一覧CSV") { vm.exportPriceList() }
+                    }
                         .buttonStyle(.app)
                         .frame(maxWidth: 280)
                     Text("おしながきとの照合用。sats価格が空の商品を確認する。").font(.caption).foregroundColor(.secondary)

@@ -89,9 +89,9 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOu
               let value = object.stringValue,
               !value.isEmpty else { return }
 
-        // 同じQRを連続で読んだときに二重追加しない（0.8秒あければ再追加できる）
+        // 同じQRを連続で読んだときに二重追加しない（1.2秒あければ再追加できる。A-2）
         let now = Date()
-        if value == lastAccepted && now.timeIntervalSince(lastAcceptedAt) < 0.8 { return }
+        if value == lastAccepted && now.timeIntervalSince(lastAcceptedAt) < 1.2 { return }
         lastAccepted = value
         lastAcceptedAt = now
         lastCode = value

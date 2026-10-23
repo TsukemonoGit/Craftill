@@ -1296,7 +1296,7 @@ func makeSnapshot(types: [ProductType], inventory: [Product], now: Date) -> Snap
         SnapshotProduct(productId: p.id, typeId: p.typeId, name: p.name,
                         priceJpy: p.priceJpy, priceSats: p.priceSats,
                         attrs: [p.attr1, p.attr2, p.attr3],
-                        stock: p.stock, hasImage: p.imageRef != nil)
+                        stock: p.stock, hasImage: p.hasBundledImage)
     }
     return Snapshot(createdAt: now, types: usedTypes, products: products)
 }

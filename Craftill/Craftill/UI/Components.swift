@@ -235,11 +235,21 @@ struct PlaceholderImage: View {
 struct ProductImageView: View {
     let imageRef: String?
     var placeholder = "画像"
+    /// 画像が無いときに、プレースホルダーの代わりに出す文字（商品名など。A-1）。
+    var fallbackText: String? = nil
 
     var body: some View {
         ZStack {
             if let image = Self.bundledImage(imageRef) {
                 image.resizable().scaledToFill()
+            } else if let fallbackText, !fallbackText.isEmpty {
+                Text(fallbackText)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.6)
+                    .padding(2)
             } else {
                 PlaceholderImage(label: placeholder)
             }
@@ -478,7 +488,7 @@ struct ProductTile: View {
         Button { vm.addToCart(product) } label: {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack {
-                    if product.imageRef != nil {
+                    if product.hasBundledImage {
                         ProductImageView(imageRef: product.imageRef)
                     } else {
                         Text("画像なし\n" + (product.attrText(in: vm.types) ?? ""))
@@ -542,7 +552,9 @@ struct CartRowView: View {
     }
 
     private var thumbnail: some View {
-        ProductImageView(imageRef: imageRef, placeholder: line.isAdhoc ? "野良" : "画像")
+        ProductImageView(imageRef: imageRef,
+                         placeholder: line.isAdhoc ? "野良" : "画像",
+                         fallbackText: line.isAdhoc ? nil : line.name)
             .frame(minWidth: 36, idealWidth: 52, maxWidth: 52, minHeight: 36, idealHeight: 52, maxHeight: 52)
             .cornerRadius(4)
     }
