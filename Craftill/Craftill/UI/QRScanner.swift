@@ -1,6 +1,8 @@
 import SwiftUI
 import Combine
 import AVFoundation
+import Vision
+import CoreImage
 #if canImport(AppKit)
 import AppKit
 #elseif canImport(UIKit)
@@ -10,12 +12,22 @@ import UIKit
 // ════════════════════════════════════════════════════════════
 // 内蔵カメラでQRを読む（P1-4）。QRの中身は商品ID。
 // macOS / iPadOS の両方でビルドできるようプレビューを分岐。
+// 読み取りは Vision。カメラによって鏡像になる場合に備え、
+// 検出用フレームを左右反転できる（mirrorImage）。
 // ════════════════════════════════════════════════════════════
 
-final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOutputObjectsDelegate {
+final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     let session = AVCaptureSession()
     @Published var lastCode = ""
     @Published var status = "カメラを起動しています…"
+    /// 検出用フレームを左右反転するか。カメラによって鏡像になる場合のみ ON にする。
+    @Published var mirrorImage = false {
+        didSet {
+            flagLock.lock()
+            mirrorFlag = mirrorImage
+            flagLock.unlock()
+        }
+    }
     var onCode: ((String) -> Void)?
 
     private var configured = false
@@ -24,6 +36,11 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOu
     /// 画面がカメラを必要としているか。遅延再開がシート終了後に走るのを防ぐ。
     private var shouldRun = false
     private let sessionQueue = DispatchQueue(label: "dev.craftill.camera-session")
+    private let videoQueue = DispatchQueue(label: "dev.craftill.camera-video")
+
+    // videoQueue から読むためロックで保護する。
+    private let flagLock = NSLock()
+    private var mirrorFlag = false
 
     override init() {
         super.init()
@@ -123,25 +140,50 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOu
         }
         session.addInput(input)
 
-        let output = AVCaptureMetadataOutput()
+        let output = AVCaptureVideoDataOutput()
+        output.alwaysDiscardsLateVideoFrames = true
         guard session.canAddOutput(output) else {
             status = "QR読み取りを開始できません"
             return
         }
         session.addOutput(output)
-        output.setMetadataObjectsDelegate(self, queue: .main)
-        output.metadataObjectTypes = output.availableMetadataObjectTypes.contains(.qr)
-            ? [.qr] : output.availableMetadataObjectTypes
+        output.setSampleBufferDelegate(self, queue: videoQueue)
         configured = true
     }
 
-    func metadataOutput(_ output: AVCaptureMetadataOutput,
-                        didOutput metadataObjects: [AVMetadataObject],
-                        from connection: AVCaptureConnection) {
-        guard let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-              let value = object.stringValue,
-              !value.isEmpty else { return }
+    /// videoQueue 上で呼ばれる。フレームごとに Vision で QR を検出する。
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
+        var image = CIImage(cvPixelBuffer: pixelBuffer)
+        flagLock.lock()
+        let mirror = mirrorFlag
+        flagLock.unlock()
+        if mirror {
+            image = image.oriented(.upMirrored)
+        }
+
+        let request = VNDetectBarcodesRequest()
+        request.symbologies = [.qr]
+        let handler = VNImageRequestHandler(ciImage: image, options: [:])
+        do {
+            try handler.perform([request])
+        } catch {
+            return
+        }
+
+        guard let value = request.results?
+            .compactMap({ $0.payloadStringValue })
+            .first(where: { !$0.isEmpty }) else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.accept(value)
+        }
+    }
+
+    private func accept(_ value: String) {
         // 同じQRを連続で読んだときに二重追加しない（1.2秒あければ再追加できる。A-2）
         let now = Date()
         if value == lastAccepted && now.timeIntervalSince(lastAcceptedAt) < 1.2 { return }
@@ -230,6 +272,11 @@ struct QRScannerSheet: View {
                 if !scanner.lastCode.isEmpty {
                     Text("読取: \(scanner.lastCode)").font(.callout).bold()
                 }
+                Button(scanner.mirrorImage ? "反転: ON" : "反転: OFF") {
+                    scanner.mirrorImage.toggle()
+                }
+                .buttonStyle(.app)
+                .frame(maxWidth: 120)
             }
         }
         .padding(16)
@@ -237,7 +284,13 @@ struct QRScannerSheet: View {
                minHeight: 320, idealHeight: 480, maxHeight: .infinity)
         .onAppear {
             scanner.onCode = { code in
-                vm.addByID(code)
+                if vm.addByID(code) {
+                    scanner.onCode = nil
+                    scanner.stop()
+                    dismiss()
+                } else {
+                    scanner.status = vm.message
+                }
             }
             scanner.start()
         }

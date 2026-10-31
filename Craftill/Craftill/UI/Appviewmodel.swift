@@ -487,14 +487,16 @@ final class AppViewModel: ObservableObject {
 
     // MARK: カート
 
-    func addToCart(_ p: Product) {
+    @discardableResult
+    func addToCart(_ p: Product) -> Bool {
         guard saleState == .idle || saleState == .scanning else {
             message = "この状態では商品を追加できません"
-            return
+            return false
         }
         let event: SaleEvent = saleState == .idle ? .addFirstItem : .addItem
         let result = add(product: p, qty: 1, cart: &context.cart, inventory: inventory, types: types)
         applyEdit(result, zero: false, event: event)
+        return true
     }
 
     func normalizeID(_ raw: String) -> String {
@@ -523,13 +525,14 @@ final class AppViewModel: ObservableObject {
         return s
     }
 
-    func addByID(_ raw: String) {
+    @discardableResult
+    func addByID(_ raw: String) -> Bool {
         let id = normalizeID(raw)
         guard let p = inventory.first(where: { $0.id == id }) else {
             message = "存在しないID: \(raw)"
-            return
+            return false
         }
-        addToCart(p)
+        return addToCart(p)
     }
 
     func increaseQty(_ i: Int) {
