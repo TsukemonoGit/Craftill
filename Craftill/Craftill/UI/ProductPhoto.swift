@@ -23,6 +23,8 @@ struct ProductPhotoSection: View {
     let fileName: String
     @Binding var pendingData: Data?
     @Binding var removeImage: Bool
+    /// 親画面で見出しを出す場合は false にする。
+    var showsTitle = true
 
     @State private var showSourceDialog = false
     @State private var showDeleteConfirm = false
@@ -55,7 +57,9 @@ struct ProductPhotoSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("商品写真").font(.caption).foregroundColor(.secondary)
+            if showsTitle {
+                Text("商品写真").font(.caption).foregroundColor(.secondary)
+            }
             HStack(alignment: .top, spacing: 12) {
                 preview
                 VStack(alignment: .leading, spacing: 8) {
