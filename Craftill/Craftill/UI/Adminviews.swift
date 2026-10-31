@@ -386,7 +386,7 @@ struct TypeEditor: View {
             err = vm.updateType(typeId: id, name: name, prefix: prefix, digits: Int(digitsText) ?? 0,
                                 mode: mode, labels: [l1, l2, l3], groupId: groupId)
         } else {
-            err = vm.addType(typeId: typeId, name: name, prefix: prefix, digits: Int(digitsText) ?? 0, mode: mode,
+            err = vm.createType(typeId: typeId, name: name, prefix: prefix, digits: Int(digitsText) ?? 0, mode: mode,
                              labels: [l1, l2, l3], groupId: groupId, nextNo: Int(nextNoText) ?? 0)
         }
         if let err { vm.message = err; return }
@@ -607,7 +607,7 @@ struct ProductEditor: View {
         if let id = editingId {
             err = vm.updateProduct(id: id, name: name, priceJpy: jpy, priceSats: priceSats, attrs: attrs, isPublic: isPublic)
         } else {
-            err = vm.addProduct(typeId: typeId, name: name, priceJpy: jpy, priceSats: priceSats,
+            err = vm.createProduct(typeId: typeId, name: name, priceJpy: jpy, priceSats: priceSats,
                                 attrs: attrs, stock: stockVal, isPublic: isPublic)
         }
         if let err {
@@ -908,62 +908,75 @@ struct CSVImportView: View {
 struct ReportView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
+    /// 仕様の既定は全期間（A-8）。
+    @State private var allPeriod = true
     @State private var start = Date()
     @State private var end = Date()
+    @State private var reconDate = Date()
     @State private var reserve = ""
     @State private var actual = ""
 
-    private var completed: [Sale] { vm.completedSales(from: start, to: end) }
-    private var cashSales: Int {
-        completed.filter { $0.method == .cash || $0.method == .mixed }.reduce(0) { $0 + ($1.totalJpy ?? 0) }
-    }
-    private var satsSales: Int {
-        completed.filter { $0.method == .lightning || $0.method == .mixed }.reduce(0) { $0 + ($1.totalSats ?? 0) }
-    }
-    private var mixedCount: Int { completed.filter { $0.method == .mixed }.count }
-    private var voided: [Sale] { vm.voidedSales(from: start, to: end, confirmedOnly: false) }
-    private var aborted: [Sale] { vm.voidedSales(from: start, to: end, confirmedOnly: true) }
+    private var from: Date? { allPeriod ? nil : start }
+    private var to: Date? { allPeriod ? nil : end }
+    private var period: PeriodSummary { vm.periodSummary(from: from, to: to) }
+    private var completed: [Sale] { vm.completedSales(from: from, to: to) }
+    private var cashSales: Int { period.total.cashJpy }
+    private var satsSales: Int { period.total.satsAmount }
+    private var mixedCount: Int { period.total.mixedSaleIDs.count }
+    private var voidedCount: Int { period.total.canceledSaleIDs.count }
+    private var abortedCount: Int { period.total.suspendedSaleIDs.count }
+    private var abortedSats: Int { period.total.suspendedSats }
 
     var body: some View {
         AdminShell("集計") {
             VStack(alignment: .leading, spacing: 14) {
+                Toggle("全期間（既定）", isOn: $allPeriod)
                 if compact {
                     VStack(alignment: .leading, spacing: 8) {
                         DatePicker("開始日", selection: $start, displayedComponents: .date)
                         DatePicker("終了日", selection: $end, displayedComponents: .date)
                     }
+                    .disabled(allPeriod)
                 } else {
                     HStack(spacing: 12) {
                         DatePicker("開始日", selection: $start, displayedComponents: .date)
                         DatePicker("終了日", selection: $end, displayedComponents: .date)
                     }
                     .frame(maxWidth: 620)
+                    .disabled(allPeriod)
                 }
                 Text("グループ別（精算単位）").font(.headline)
                 TableRowView(cells: ["グループ", "区分", "種類", "paid_in", "明細数", "数量", "金額"],
                              widths: [200, 60, 140, 70, 70, 60, 120], header: true)
-                let rows = vm.reportRows(from: start, to: end)
+                let rows = vm.reportRows(from: from, to: to)
                 ForEach(rows) { r in
                     TableRowView(cells: [r.groupLabel, r.kind, r.typeName, r.paidIn.rawValue, "\(r.lines)", "\(r.qty)",
                                          r.paidIn == .sats ? Fmt.sats(r.amount) : Fmt.yen(r.amount)],
                                  widths: [200, 60, 140, 70, 70, 60, 120])
                 }
                 if rows.isEmpty { Text("対象の売上なし").foregroundColor(.secondary) }
-                if compact {
-                    VStack(alignment: .leading, spacing: 12) {
-                        salesCountPanels
-                    }
-                } else {
-                    HStack(alignment: .top, spacing: 12) {
-                        salesCountPanels
-                    }
+
+                Text("日次小計").font(.headline)
+                TableRowView(cells: ["日", "現金", "sats", "取消", "中断sats"],
+                             widths: [110, 130, 130, 70, 100], header: true)
+                ForEach(period.days, id: \.day) { d in
+                    TableRowView(cells: [d.day,
+                                         Fmt.yen(d.summary.cashJpy),
+                                         Fmt.sats(d.summary.satsAmount),
+                                         "\(d.summary.canceledSaleIDs.count)件",
+                                         Fmt.sats(d.summary.suspendedSats)],
+                                 widths: [110, 130, 130, 70, 100])
                 }
+                if period.days.isEmpty { Text("対象の日なし").foregroundColor(.secondary) }
+
                 if compact {
                     VStack(alignment: .leading, spacing: 12) {
+                        salesCountPanels
                         settlementPanels
                     }
                 } else {
                     HStack(alignment: .top, spacing: 12) {
+                        salesCountPanels
                         settlementPanels
                     }
                 }
@@ -971,10 +984,14 @@ struct ReportView: View {
                           alignment: .leading, spacing: 10) {
                     Button("sats照合一覧") { vm.go(.salesHistory) }.buttonStyle(.app)
                     Button("sats照合CSV（PIN）") {
-                        vm.requirePin("sats照合CSV") { vm.exportSatsReconciliation(from: start, to: end) }
+                        vm.requirePin("sats照合CSV") {
+                            vm.exportSatsReconciliation(from: exportFrom, to: exportTo)
+                        }
                     }.buttonStyle(.app)
                     Button("グループ別精算CSV（PIN）") {
-                        vm.requirePin("グループ別精算CSV") { vm.exportSettlement(from: start, to: end) }
+                        vm.requirePin("グループ別精算CSV") {
+                            vm.exportSettlement(from: exportFrom, to: exportTo)
+                        }
                     }.buttonStyle(.app)
                     Button("販売・在庫エクスポート（PIN）") {
                         vm.requirePin("エクスポート") { vm.exportAll() }
@@ -993,10 +1010,10 @@ struct ReportView: View {
             Text("会計 \(completed.count)件\n精算額に算入")
         }
         Panel(title: "販売取消（別枠）") {
-            Text("\(voided.count)件\n算入しない")
+            Text("\(voidedCount)件\n算入しない")
         }
         Panel(title: "sats確認済み中断（別枠）") {
-            Text("\(aborted.count)件 / sats合計 \(Fmt.sats(aborted.reduce(0) { $0 + ($1.totalSats ?? 0) }))\n算入しない")
+            Text("\(abortedCount)件 / sats合計 \(Fmt.sats(abortedSats))\n算入しない")
         }
     }
 
@@ -1008,15 +1025,31 @@ struct ReportView: View {
             Text("併用会計の会計数: \(mixedCount)")
         }
         Panel(title: "現金照合（日ごと）") {
+            DatePicker("照合日", selection: $reconDate, displayedComponents: .date)
             LabeledField(label: "釣銭準備金（円）", text: $reserve)
             LabeledField(label: "実残高（円）", text: $actual)
+            Text("その日の現金売上: \(Fmt.yen(recon.cashSales))")
+            Text("期待残高: \(Fmt.yen(recon.expected))")
             Text("差額: " + diffText)
         }
     }
 
+    /// 全期間のときは、実際の売上がある最小日〜最大日を CSV の期間列に使う。
+    private var exportFrom: Date {
+        from ?? vm.sales.compactMap(saleDay).min() ?? Date()
+    }
+
+    private var exportTo: Date {
+        to ?? vm.sales.compactMap(saleDay).max() ?? Date()
+    }
+
+    private var recon: CashReconciliation {
+        vm.cashReconciliation(day: reconDate, float: Int(reserve) ?? 0, actual: Int(actual) ?? 0)
+    }
+
     private var diffText: String {
-        guard let r = Int(reserve), let a = Int(actual) else { return "―" }
-        return Fmt.yen(a - (r + cashSales))
+        guard Int(reserve) != nil, Int(actual) != nil else { return "―" }
+        return Fmt.yen(recon.difference)
     }
 }
 
@@ -1215,13 +1248,19 @@ struct SyncView: View {
     var body: some View {
         AdminShell("公開サイト送信") {
             VStack(alignment: .leading, spacing: 12) {
+                Panel(title: "送信先（A-14）") {
+                    LabeledField(label: "受信エンドポイント（例: https://…/api/snapshot）",
+                                 text: $vm.syncEndpoint, required: true)
+                    LabeledField(label: "認証トークン（Keychain に保存）", text: $vm.syncToken)
+                    Button("送信先を保存") { vm.saveSyncSettings() }.buttonStyle(.app)
+                }
                 if compact {
                     VStack(spacing: 10) {
                         InfoBox(text: "通信: \(vm.isOnline ? "あり" : "なし")　／　最終送信: \(Fmt.time(vm.lastSyncAt))", size: 14, bold: false)
                         Button("公開サイトへ送信") { vm.sendSnapshot() }
                             .buttonStyle(.appPrimary)
                             .frame(maxWidth: .infinity, minHeight: 52)
-                        InfoBox(text: "画像の版識別子: a1b2c3d4（仮）", size: 12, bold: false)
+                        InfoBox(text: "画像の版識別子: \(ImageBuildInfo.version)（\(ImageBuildInfo.imageCount)件）", size: 12, bold: false)
                     }
                 } else {
                     HStack(spacing: 12) {
@@ -1229,7 +1268,7 @@ struct SyncView: View {
                         Button("公開サイトへ送信") { vm.sendSnapshot() }
                             .buttonStyle(.appPrimary)
                             .frame(maxWidth: 280, minHeight: 52)
-                        InfoBox(text: "画像の版識別子: a1b2c3d4（仮）", size: 12, bold: false)
+                        InfoBox(text: "画像の版識別子: \(ImageBuildInfo.version)（\(ImageBuildInfo.imageCount)件）", size: 12, bold: false)
                     }
                 }
                 TableRowView(cells: ["id", "at", "result", "detail"], widths: [110, 220, 90, 400], header: true)

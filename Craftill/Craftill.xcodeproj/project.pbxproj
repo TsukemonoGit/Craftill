@@ -6,13 +6,8 @@
 	objectVersion = 90;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		FE9B95213088CFA600215909 /* siyousyo.md in Resources */ = {isa = PBXBuildFile; fileRef = FE9B95203088CF9D00215909 /* siyousyo.md */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* Craftill.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Craftill.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		FE9B95203088CF9D00215909 /* siyousyo.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = siyousyo.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -36,7 +31,6 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000010 /* Craftill */,
-				FE9B95203088CF9D00215909 /* siyousyo.md */,
 				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -108,7 +102,6 @@
 		000000000000000140000000 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
-				FE9B95213088CFA600215909 /* siyousyo.md in Resources */,
 			);
 		};
 /* End PBXResourcesBuildPhase section */

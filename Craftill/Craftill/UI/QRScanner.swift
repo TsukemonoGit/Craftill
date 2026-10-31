@@ -21,18 +21,66 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOu
     private var configured = false
     private var lastAccepted = ""
     private var lastAcceptedAt = Date.distantPast
+    /// 画面がカメラを必要としているか。遅延再開がシート終了後に走るのを防ぐ。
+    private var shouldRun = false
+    private let sessionQueue = DispatchQueue(label: "dev.craftill.camera-session")
+
+    override init() {
+        super.init()
+        let c = NotificationCenter.default
+        c.addObserver(self, selector: #selector(sessionRuntimeError(_:)),
+                      name: .AVCaptureSessionRuntimeError, object: session)
+        c.addObserver(self, selector: #selector(sessionInterrupted(_:)),
+                      name: .AVCaptureSessionWasInterrupted, object: session)
+        c.addObserver(self, selector: #selector(sessionInterruptionEnded(_:)),
+                      name: .AVCaptureSessionInterruptionEnded, object: session)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    /// アプリ切替・スリープ・カメラ割り込みから復帰したら、セッションを再開する（A-3）。
+    @objc private func sessionRuntimeError(_ note: Notification) {
+        restartSoon()
+    }
+
+    @objc private func sessionInterrupted(_ note: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            self?.status = "カメラが一時停止しました（復帰を待っています）"
+        }
+    }
+
+    @objc private func sessionInterruptionEnded(_ note: Notification) {
+        restartSoon()
+    }
+
+    private func restartSoon() {
+        // 通知はメインスレッド以外から来ることもある。`shouldRun` と
+        // `@Published` の更新をメインに揃える。
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.shouldRun else { return }
+            self.stopSessionOnly()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self, self.shouldRun else { return }
+                self.start()
+            }
+        }
+    }
 
     func start() {
+        shouldRun = true
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             startSession()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
+                    guard let self, self.shouldRun else { return }
                     if granted {
-                        self?.startSession()
+                        self.startSession()
                     } else {
-                        self?.status = "カメラへのアクセスが許可されていません（システム設定 > プライバシーとセキュリティ > カメラ）"
+                        self.status = "カメラへのアクセスが許可されていません（システム設定 > プライバシーとセキュリティ > カメラ）"
                     }
                 }
             }
@@ -42,18 +90,23 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOu
     }
 
     private func startSession() {
-        guard !session.isRunning else { return }
+        guard shouldRun, !session.isRunning else { return }
         if !configured { configure() }
         guard configured else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [session] in
+        sessionQueue.async { [session] in
             session.startRunning()
         }
         status = "QRをカメラに向けてください"
     }
 
     func stop() {
+        shouldRun = false
+        stopSessionOnly()
+    }
+
+    private func stopSessionOnly() {
         guard session.isRunning else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [session] in
+        sessionQueue.async { [session] in
             session.stopRunning()
         }
     }
@@ -146,6 +199,7 @@ struct CameraPreview: UIViewRepresentable {
 struct QRScannerSheet: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var scanner = QRScannerController()
 
     var body: some View {
@@ -189,6 +243,16 @@ struct QRScannerSheet: View {
         }
         .onDisappear {
             scanner.stop()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                scanner.start()
+            case .inactive, .background:
+                scanner.stop()
+            @unknown default:
+                break
+            }
         }
     }
 }

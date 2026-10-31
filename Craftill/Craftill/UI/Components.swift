@@ -258,8 +258,7 @@ struct ProductImageView: View {
     }
 
     private static func bundledImage(_ ref: String?) -> Image? {
-        guard let ref, !ref.isEmpty,
-              let url = Bundle.main.url(forResource: ref, withExtension: nil) else {
+        guard let ref, let url = bundledImageURL(named: ref) else {
             return nil
         }
         #if canImport(AppKit)
@@ -399,8 +398,11 @@ struct MessageBar: View {
 }
 
 struct KeypadView: View {
+    /// 物理キーボードの数字・Delete を受け付ける（A-5）。現金入力画面だけで有効にする。
+    var keyboard = false
     let onKey: (String) -> Void
     private let keys = ["7", "8", "9", "4", "5", "6", "1", "2", "3", "0", "00", "C"]
+    @FocusState private var focused: Bool
 
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
@@ -411,6 +413,22 @@ struct KeypadView: View {
             }
         }
         .frame(maxWidth: 360)
+        .focusable(keyboard)
+        .focused($focused)
+        .onAppear { if keyboard { focused = true } }
+        .onKeyPress { press in
+            guard keyboard else { return .ignored }
+            if press.key == .delete {
+                onKey("C")
+                return .handled
+            }
+            if press.characters.count == 1,
+               let c = press.characters.first, c >= "0", c <= "9" {
+                onKey(String(c))
+                return .handled
+            }
+            return .ignored
+        }
     }
 }
 
@@ -489,7 +507,7 @@ struct ProductTile: View {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack {
                     if product.hasBundledImage {
-                        ProductImageView(imageRef: product.imageRef)
+                        ProductImageView(imageRef: product.bundledImageName)
                     } else {
                         Text("画像なし\n" + (product.attrText(in: vm.types) ?? ""))
                             .font(.caption)
@@ -548,7 +566,7 @@ struct CartRowView: View {
     }
 
     private var imageRef: String? {
-        line.isAdhoc ? nil : vm.inventory.first(where: { $0.id == line.id })?.imageRef
+        line.isAdhoc ? nil : vm.inventory.first(where: { $0.id == line.id })?.bundledImageName
     }
 
     private var thumbnail: some View {

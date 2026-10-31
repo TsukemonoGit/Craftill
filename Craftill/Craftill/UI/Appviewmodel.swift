@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import Network
 #if canImport(AppKit)
 import AppKit
 #elseif canImport(UIKit)
@@ -114,7 +115,8 @@ final class AppViewModel: ObservableObject {
     @Published var dialogPin: String = ""
     @Published var pinPrompt: PinPrompt? = nil
     @Published var showAdhoc = false
-    @Published var isOnline = true
+    /// OS の接続状態（A-10）。`NWPathMonitor` が更新する。画面からは書き換えない。
+    @Published private(set) var isOnline = true
     @Published var pin: String? = nil
     @Published var isUnlocked = false
 
@@ -124,13 +126,16 @@ final class AppViewModel: ObservableObject {
     @Published var inventory: [Product] = []
     @Published var selectedTypeId: String = ""
 
-    // 会計
-    @Published var saleState: SaleState = .idle
-    @Published var cart: [CartLine] = []
+    // 会計。状態・カート・sats確認は `SaleContext` が唯一の正（A-4）。
+    @Published private(set) var context = SaleContext()
     @Published var cashReceived = 0
     @Published var satsStartedAt = Date()
-    @Published var satsConfirmedAt: Date? = nil
     @Published var done: DoneInfo? = nil
+
+    /// 画面はこの読み取り専用の値だけを見る。UI から直接代入しない。
+    var saleState: SaleState { context.state }
+    var cart: [CartLine] { context.cart }
+    var satsConfirmedAt: Date? { context.satsConfirmedAt }
 
     // 記録
     @Published var sales: [Sale] = []
@@ -138,6 +143,8 @@ final class AppViewModel: ObservableObject {
     @Published var movements: [StockMovement] = []
     @Published var syncLog: [SyncLogEntry] = []
     @Published var lastSyncAt: Date? = nil
+    @Published var syncEndpoint = SyncSettings.endpoint
+    @Published var syncToken = SyncSettings.token
 
     private var ids = IdSequencer()
     private let db = Database.shared
@@ -147,6 +154,12 @@ final class AppViewModel: ObservableObject {
     private static let adhocSeqKey = "craftill.adhocSeq"
     /// `requirePinWithValue` で、検証済みの PIN を操作へ渡すために保持する。
     private var verifiedPin = ""
+    /// 確認ダイアログ／PIN ダイアログを経て適用する遷移（A-4）。
+    private var pendingMove: Move?
+    /// sats の「済」確認を経て適用する遷移。
+    private var pendingSatsMove: Move?
+    private let pathMonitor = NWPathMonitor()
+    private let pathQueue = DispatchQueue(label: "dev.craftill.network-monitor")
 
     init() {
         pin = PinStore.load()
@@ -154,9 +167,16 @@ final class AppViewModel: ObservableObject {
         loadMaster()
         restoreActiveSale()
         ids = Self.makeSequencer(sales: sales, movements: movements,
-                                 syncLog: syncLog, cart: cart)
+                                 syncLog: syncLog, cart: context.cart)
 
         if pin != nil { screen = .register }
+
+        // A-10: OS の接続状態を購読する。手動トグルは廃止。
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let online = path.status == .satisfied
+            DispatchQueue.main.async { self?.isOnline = online }
+        }
+        pathMonitor.start(queue: pathQueue)
 
         // 会計状態は更新のたびに保存する（A-3）。willChange の直後に読む。
         objectWillChange
@@ -165,6 +185,10 @@ final class AppViewModel: ObservableObject {
                 DispatchQueue.main.async { self.saveActiveSale() }
             }
             .store(in: &cancellables)
+    }
+
+    deinit {
+        pathMonitor.cancel()
     }
 
     private func loadMaster() {
@@ -215,10 +239,7 @@ final class AppViewModel: ObservableObject {
         case .idle, .done, .suspended:
             clearActiveSale()
         default:
-            let ctx = SaleContext(state: saleState, cart: cart,
-                                  satsConfirmedAt: satsConfirmedAt,
-                                  confirmedSats: satsConfirmedAt == nil ? nil : totals.sats)
-            let active = ActiveSale(context: ctx, cashReceived: cashReceived,
+            let active = ActiveSale(context: context, cashReceived: cashReceived,
                                     satsStartedAt: satsStartedAt)
             if let data = try? JSONEncoder().encode(active) {
                 defaults.set(data, forKey: Self.activeSaleKey)
@@ -230,17 +251,31 @@ final class AppViewModel: ObservableObject {
         guard let data = defaults.data(forKey: Self.activeSaleKey),
               let active = try? JSONDecoder().decode(ActiveSale.self, from: data) else { return }
         let ctx = active.context
+        // 壊れた保存内容で不正な状態に復元しない（A-3、A-4）。
+        let valid: Bool
         switch ctx.state {
         case .idle, .done, .suspended:
-            clearActiveSale()
-        default:
-            saleState = ctx.state
-            cart = ctx.cart
-            satsConfirmedAt = ctx.satsConfirmedAt
-            cashReceived = active.cashReceived
-            satsStartedAt = active.satsStartedAt ?? Date()
-            screen = .register
+            valid = false
+        case .scanning:
+            valid = !ctx.cart.isEmpty && ctx.satsConfirmedAt == nil
+        case .choosingPayment:
+            valid = !ctx.cart.isEmpty && ctx.satsConfirmedAt == nil
+        case .satsWaiting:
+            valid = !ctx.cart.isEmpty
+        case .mixedCashInput:
+            // sats 確認済みの状態なので、確認時刻が無い保存内容は復元しない（A-4）。
+            valid = !ctx.cart.isEmpty && ctx.satsConfirmedAt != nil
+        case .cashInput:
+            valid = !ctx.cart.isEmpty && ctx.satsConfirmedAt == nil
         }
+        guard valid else {
+            clearActiveSale()
+            return
+        }
+        context = ctx
+        cashReceived = active.cashReceived
+        satsStartedAt = active.satsStartedAt ?? Date()
+        screen = .register
     }
 
     private func clearActiveSale() {
@@ -316,6 +351,7 @@ final class AppViewModel: ObservableObject {
         let saved = PinStore.save(a)
         pin = a
         isUnlocked = true
+        verifiedPin = a
         message = saved ? "PINを設定しました" : "PINを保存できませんでした（この起動中のみ有効）"
         screen = .register
     }
@@ -325,6 +361,7 @@ final class AppViewModel: ObservableObject {
     func unlock(_ entered: String) -> Bool {
         guard let pin else {
             isUnlocked = true
+            verifiedPin = ""
             return true
         }
         guard entered == pin else {
@@ -332,6 +369,9 @@ final class AppViewModel: ObservableObject {
             return false
         }
         isUnlocked = true
+        // 起動時の解除も「このセッションで PIN を検証済み」として扱う。
+        // これがないと、解除後に編集画面で保存するたび PIN を要求してしまう（A-11）。
+        verifiedPin = entered
         message = ""
         return true
     }
@@ -339,6 +379,7 @@ final class AppViewModel: ObservableObject {
     func lock() {
         guard pin != nil else { return }
         isUnlocked = false
+        verifiedPin = ""
         pinPrompt = nil
         dialog = nil
     }
@@ -371,11 +412,31 @@ final class AppViewModel: ObservableObject {
         return s == pin
     }
 
+    /// VM 内での PIN 再検証（A-11）。画面を迂回した呼び出しでも、
+    /// このセッションで PIN を検証していなければ操作できない。
+    /// PIN 未設定（初期投入）だけは許可する。
+    private func adminPINError(_ entered: String? = nil) -> String? {
+        guard let pin else { return nil }
+        let candidate = entered ?? verifiedPin
+        return candidate == pin ? nil : "PINが違います"
+    }
+
+    /// エクスポートなど戻り値を持たない操作向け。失敗時は message に出す。
+    @discardableResult
+    private func requireAdmin(_ title: String) -> Bool {
+        if let e = adminPINError() {
+            message = "\(title): \(e)"
+            return false
+        }
+        return true
+    }
+
     // MARK: ダイアログ
 
     func closeDialog() {
         dialog = nil
         dialogPin = ""
+        pendingMove = nil
     }
 
     func confirmDialog(_ d: Dialog) {
@@ -384,12 +445,16 @@ final class AppViewModel: ObservableObject {
             confirmDelete(x)
             closeDialog()
         case .suspend:
+            if let m = pendingMove { apply(m, to: &context) }
+            pendingMove = nil
             resetSale()
             message = "会計を中断しました"
             closeDialog()
         case .suspendSatsConfirmed:
             guard verifyPin(dialogPin) else { message = "PINが違います"; return }
-            recordConfirmedSuspend(pin: dialogPin)
+            guard recordConfirmedSuspend(pin: dialogPin) else { return }
+            if let m = pendingMove { apply(m, to: &context) }
+            pendingMove = nil
             resetSale()
             message = "sats確認済みの会計を中断しました（記録あり）"
             closeDialog()
@@ -412,8 +477,9 @@ final class AppViewModel: ObservableObject {
             message = "この状態では商品を追加できません"
             return
         }
-        let result = add(product: p, qty: 1, cart: &cart, inventory: inventory, types: types)
-        applyEdit(result, zero: false)
+        let event: SaleEvent = saleState == .idle ? .addFirstItem : .addItem
+        let result = add(product: p, qty: 1, cart: &context.cart, inventory: inventory, types: types)
+        applyEdit(result, zero: false, event: event)
     }
 
     func normalizeID(_ raw: String) -> String {
@@ -453,24 +519,28 @@ final class AppViewModel: ObservableObject {
 
     func increaseQty(_ i: Int) {
         guard saleState == .scanning else { return }
-        applyEdit(increase(at: i, cart: &cart, inventory: inventory, types: types), zero: false)
+        applyEdit(increase(at: i, cart: &context.cart, inventory: inventory, types: types), zero: false)
     }
 
     func decreaseQty(_ i: Int) {
         guard saleState == .scanning else { return }
-        applyEdit(decrease(at: i, cart: &cart, inventory: inventory, types: types), zero: true)
+        // 数量が 1 以上残る減算では状態を変えない。行が 0 になる場合は確認後に
+        // `confirmDelete()` が `.removeItem` を適用する（A-4）。
+        applyEdit(decrease(at: i, cart: &context.cart, inventory: inventory, types: types),
+                  zero: true)
     }
 
     func removeLine(_ i: Int) {
         guard saleState == .scanning else { return }
-        applyEdit(remove(at: i, cart: cart), zero: false)
+        applyEdit(remove(at: i, cart: context.cart), zero: false, event: .removeItem)
     }
 
-    private func applyEdit(_ e: CartEdit, zero: Bool) {
+    /// カート編集の結果を表示し、成功時だけ状態機械の遷移を適用する（A-4）。
+    private func applyEdit(_ e: CartEdit, zero: Bool, event: SaleEvent? = nil) {
         switch e {
         case .applied(let m):
             message = m
-            if saleState == .idle && !cart.isEmpty { saleState = .scanning }
+            if let event { applyMove(event) }
         case .needsConfirm(let d):
             dialog = zero ? .zeroQty(d) : .deleteLine(d)
         case .rejected(let m):
@@ -479,50 +549,76 @@ final class AppViewModel: ObservableObject {
     }
 
     private func confirmDelete(_ d: CartDelete) {
-        message = performDelete(d, cart: &cart)
-        if cart.isEmpty { saleState = .idle }
+        guard context.cart.indices.contains(d.index) else {
+            message = "対象が消えていました"
+            return
+        }
+        message = performDelete(d, cart: &context.cart)
+        applyMove(.removeItem)
     }
 
     func addAdhoc(priceJpy: Int, priceSats: Int?, name: String, groupId: String?, qty: Int) {
         guard saleState == .idle || saleState == .scanning else { return }
+        let event: SaleEvent = saleState == .idle ? .addFirstItem : .addItem
         let line = CartLine.adhoc(id: ids.nextAdhocID(),
                                   name: name.isEmpty ? "野良" : name,
                                   priceJpy: priceJpy, priceSats: priceSats,
-                                  groupId: groupId, qty: qty)
+                                  groupId: groupId, qty: max(1, qty))
         defaults.set(ids.adhocHighWater, forKey: Self.adhocSeqKey)
-        cart.append(line)
-        if saleState == .idle { saleState = .scanning }
+        context.cart.append(line)
+        applyMove(event)
         message = "\(line.name) を追加しました"
     }
 
-    // MARK: 会計の遷移（仮）
+    // MARK: 会計の遷移
+
+    /// 遷移は `move()` の返り値だけを見て適用する（A-4）。
+    /// UI はこの関数を呼ぶだけで、`SaleState` を直接代入しない。
+    @discardableResult
+    private func applyMove(_ event: SaleEvent) -> Move {
+        let m = move(event, in: context)
+        switch m {
+        case .allowed:
+            apply(m, to: &context)
+        case .rejected(let reason):
+            message = reason
+        case .needsConfirm, .needsPIN:
+            // 確認・PIN が必要な遷移は、この関数では適用しない。
+            // 呼び出し側がダイアログを出し、確認後に `apply()` する（A-4）。
+            break
+        }
+        return m
+    }
 
     func proceedToPayment() {
-        guard saleState == .scanning, !cart.isEmpty else { return }
-        saleState = .choosingPayment
+        guard !cart.isEmpty else { return }
+        applyMove(.toPaymentSelection)
     }
 
     func backToScan() {
-        guard saleState == .choosingPayment else { return }
-        saleState = .scanning
+        applyMove(.backToScan)
     }
 
     func chooseCash() {
-        guard saleState == .choosingPayment else { return }
-        cashReceived = 0
-        saleState = .cashInput
+        let m = applyMove(.chooseCash)
+        if m.nextState == .cashInput { cashReceived = 0 }
     }
 
     func chooseSats() {
-        guard saleState == .choosingPayment, canPayBySats else { return }
-        satsStartedAt = Date()
-        satsConfirmedAt = nil
-        saleState = .satsWaiting
+        guard canPayBySats else {
+            message = satsDisabledReason ?? "sats払いを選択できません"
+            return
+        }
+        let m = applyMove(.chooseSats)
+        if m.nextState == .satsWaiting {
+            satsStartedAt = Date()
+            context.satsConfirmedAt = nil
+            context.confirmedSats = nil
+        }
     }
 
     func reselectMethod() {
-        guard saleState == .satsWaiting else { return }
-        saleState = .choosingPayment
+        applyMove(.changeMethod)
     }
 
     func pressKey(_ k: String) {
@@ -538,20 +634,34 @@ final class AppViewModel: ObservableObject {
 
     func confirmCash() {
         guard canConfirmCash else { return }
-        if saleState == .cashInput { complete(method: .cash) }
-        else if saleState == .mixedCashInput { complete(method: .mixed) }
+        let method: PaymentMethod = saleState == .cashInput ? .cash : .mixed
+        let event: SaleEvent = saleState == .cashInput
+            ? .confirmCash(cashReceived)
+            : .confirmMixedCash(cashReceived)
+        let m = move(event, in: context)
+        guard m.nextState == .done else {
+            if case .rejected(let reason) = m { message = reason }
+            return
+        }
+        complete(method: method, finalMove: m)
     }
 
-    func askSatsConfirm() { dialog = .satsConfirm }
+    func askSatsConfirm() {
+        guard saleState == .satsWaiting else { return }
+        pendingSatsMove = move(.tapDone, in: context)
+        dialog = .satsConfirm
+    }
 
     private func approveSats() {
-        guard saleState == .satsWaiting else { return }
-        satsConfirmedAt = Date()
-        if totals.cashForSats > 0 {
-            cashReceived = 0
-            saleState = .mixedCashInput
+        guard saleState == .satsWaiting, let m = pendingSatsMove,
+              let next = m.nextState else { return }
+        pendingSatsMove = nil
+        markSatsConfirmed(&context, at: Date())
+        if next == .done {
+            complete(method: .lightning, finalMove: m)
         } else {
-            complete(method: .lightning)
+            apply(m, to: &context)
+            if next == .mixedCashInput { cashReceived = 0 }
         }
     }
 
@@ -567,14 +677,20 @@ final class AppViewModel: ObservableObject {
     }
 
     func requestSuspend() {
-        switch saleState {
-        case .mixedCashInput:
+        let m = move(.suspend, in: context)
+        switch m {
+        case .needsPIN:
+            pendingMove = m
             dialogPin = ""
             dialog = .suspendSatsConfirmed
-        case .scanning, .choosingPayment, .cashInput, .satsWaiting:
+        case .needsConfirm:
+            pendingMove = m
             dialog = .suspend
-        default:
-            break
+        case .rejected(let reason):
+            message = reason
+        case .allowed:
+            pendingMove = m
+            dialog = .suspend
         }
     }
 
@@ -583,26 +699,41 @@ final class AppViewModel: ObservableObject {
         done = nil
     }
 
+    /// 会計データを空に戻す。状態は必ず `move(.backToIdle)` を経てから消す（A-4）。
     private func resetSale() {
-        cart = []
+        if saleState == .done || saleState == .suspended {
+            applyMove(.backToIdle)
+        }
+        context = SaleContext()
         cashReceived = 0
-        satsConfirmedAt = nil
-        saleState = .idle
+        pendingMove = nil
+        pendingSatsMove = nil
         clearActiveSale()
     }
 
-    private func complete(method: PaymentMethod) {
-        let before = movements.count
+    /// 会計確定。**DB へ保存できたときだけ**メモリへ反映する（P-02、A-4）。
+    private func complete(method: PaymentMethod, finalMove: Move) {
+        guard let db else {
+            message = "データベースを開けないため、会計を完了できません"
+            return
+        }
         let chooseSats = method != .cash
         let received: Int? = (method == .cash || method == .mixed) ? cashReceived : nil
-        let confirmed: Date? = method == .cash ? nil : satsConfirmedAt
+        let confirmed: Date? = method == .cash ? nil : context.satsConfirmedAt
 
-        let result = commitSale(cart: cart,
-                                inventory: &inventory,
-                                movements: &movements,
-                                sales: &sales,
-                                items: &saleItems,
-                                ids: &ids,
+        // まずコピー上で検証・採番・在庫減算を行う。失敗したら何も反映しない。
+        var inv = inventory
+        var mov = movements
+        var allSales = sales
+        var allItems = saleItems
+        var seq = ids
+        let before = mov.count
+        let result = commitSale(cart: context.cart,
+                                inventory: &inv,
+                                movements: &mov,
+                                sales: &allSales,
+                                items: &allItems,
+                                ids: &seq,
                                 types: types,
                                 chooseSats: chooseSats,
                                 receivedJpy: received,
@@ -612,124 +743,158 @@ final class AppViewModel: ObservableObject {
         switch result {
         case .failure(let problems):
             message = problems.joined(separator: "\n")
-        case .success(let sale, let items, _):
-            let newMovements = Array(movements[before...])
-            if let db {
-                do {
-                    try db.persistCommit(sale: sale, items: items,
-                                         inventory: inventory, movements: newMovements)
-                } catch {
-                    message = "販売は記録しましたが保存に失敗しました: \(error.localizedDescription)"
-                }
+        case .success(let sale, let newItems, _):
+            let newMovements = Array(mov[before...])
+            do {
+                try db.persistCommit(sale: sale, items: newItems,
+                                     inventory: inv, movements: newMovements)
+            } catch {
+                message = "販売を保存できなかったため、会計は完了していません: \(error.localizedDescription)"
+                return
             }
+            inventory = inv
+            movements = mov
+            sales = allSales
+            saleItems = allItems
+            ids = seq
+            apply(finalMove, to: &context)
             done = DoneInfo(saleId: sale.id, method: sale.method,
                             totalSats: sale.totalSats, cashPart: sale.totalJpy,
                             received: sale.receivedJpy, change: sale.changeJpy)
-            saleState = .done
             clearActiveSale()
         }
     }
 
-    private func recordConfirmedSuspend(pin entered: String) {
-        let result = suspendSale(cart: cart,
-                                 ids: &ids,
+    @discardableResult
+    private func recordConfirmedSuspend(pin entered: String) -> Bool {
+        guard let db else {
+            message = "データベースを開けないため、中断を記録できません"
+            return false
+        }
+        var allSales = sales
+        var allItems = saleItems
+        var seq = ids
+        let result = suspendSale(cart: context.cart,
+                                 ids: &seq,
                                  correctPIN: pin ?? "",
                                  pin: entered,
-                                 sales: &sales,
-                                 items: &saleItems,
+                                 sales: &allSales,
+                                 items: &allItems,
                                  chooseSats: true,
-                                 confirmedAt: satsConfirmedAt,
+                                 confirmedAt: context.satsConfirmedAt,
                                  now: Date())
         switch result {
         case .failure(let m):
             message = m
+            return false
         case .success(let sale, let items):
-            guard let sale else { return }
-            if let db {
-                do {
-                    try db.persistCommit(sale: sale, items: items,
-                                         inventory: inventory, movements: [])
-                } catch {
-                    message = "中断は記録しましたが保存に失敗しました: \(error.localizedDescription)"
-                }
+            guard let sale else { return true }
+            do {
+                try db.persistCommit(sale: sale, items: items,
+                                     inventory: inventory, movements: [])
+            } catch {
+                message = "中断を保存できなかったため、記録していません: \(error.localizedDescription)"
+                return false
             }
+            sales = allSales
+            saleItems = allItems
+            ids = seq
+            return true
         }
     }
 
     // MARK: 販売取消・返金・在庫調整
 
     private func performVoidSale(_ id: String, pin entered: String) {
-        let before = movements.count
+        guard let db else {
+            message = "データベースを開けないため、販売取消できません"
+            return
+        }
+        // コピー上で取消を作り、保存できたときだけメモリへ反映する（P-02）。
+        var inv = inventory
+        var mov = movements
+        var allSales = sales
+        var seq = ids
+        let before = mov.count
         let result = voidSale(saleId: id,
                               correctPIN: pin ?? "",
                               pin: entered,
-                              sales: &sales,
+                              sales: &allSales,
                               items: saleItems,
-                              inventory: &inventory,
-                              movements: &movements,
-                              ids: &ids,
+                              inventory: &inv,
+                              movements: &mov,
+                              ids: &seq,
                               types: types,
                               at: Date())
         switch result {
         case .failure(let m):
             message = m
         case .success(let memo):
-            if let sale = sales.first(where: { $0.id == id }), let db {
-                do {
-                    try db.persistVoid(sale: sale, inventory: inventory,
-                                       movements: Array(movements[before...]))
-                } catch {
-                    message = "取り消しましたが保存に失敗しました: \(error.localizedDescription)"
-                }
+            guard let sale = allSales.first(where: { $0.id == id }) else { return }
+            do {
+                try db.persistVoid(sale: sale, inventory: inv,
+                                   movements: Array(mov[before...]))
+            } catch {
+                message = "販売取消を保存できなかったため、取り消していません: \(error.localizedDescription)"
+                return
             }
+            inventory = inv
+            movements = mov
+            sales = allSales
+            ids = seq
             message = memo.isEmpty ? "販売取消: \(id)" : "販売取消: \(id)\n" + memo.joined(separator: "\n")
         }
     }
 
     func toggleRefunded(_ id: String, pin entered: String) {
+        guard let db else {
+            message = "データベースを開けないため、返金済みフラグを保存できません"
+            return
+        }
         guard let i = sales.firstIndex(where: { $0.id == id }) else { return }
-        let old = sales[i].refunded
-        let result = setRefunded(saleId: id, value: !old,
-                                 correctPIN: pin ?? "", pin: entered, sales: &sales)
+        var updated = sales
+        let result = setRefunded(saleId: id, value: !sales[i].refunded,
+                                 correctPIN: pin ?? "", pin: entered, sales: &updated)
         switch result {
         case .failure(let m):
             message = m
         case .success(let m):
             do {
-                try db?.persistSale(sales[i])
-                message = m
+                try db.persistSale(updated[i])
             } catch {
-                sales[i].refunded = old
                 message = "返金済みフラグを保存できませんでした: \(error.localizedDescription)"
+                return
             }
+            sales = updated
+            message = m
         }
     }
 
     func performStockAdjustment(productId: String, newStock: Int, reason: String,
                                 pin entered: String) -> String? {
         guard !reason.trimmingCharacters(in: .whitespaces).isEmpty else { return "理由は必須です" }
-        let before = movements.count
-        let inventoryBefore = inventory
-        let movementsBefore = movements
-        let idsBefore = ids
+        guard let db else { return "データベースを開けないため、在庫調整できません" }
+        var inv = inventory
+        var mov = movements
+        var seq = ids
+        let before = mov.count
         let result = adjustStock(productId: productId, newStock: newStock, reason: reason,
                                  correctPIN: pin ?? "", pin: entered,
-                                 inventory: &inventory, movements: &movements,
-                                 ids: &ids, types: types, at: Date())
+                                 inventory: &inv, movements: &mov,
+                                 ids: &seq, types: types, at: Date())
         switch result {
         case .failure(let m):
             return m
-        case .success(let memo):
+        case .success:
             do {
-                try db?.persistAdjust(inventory: inventory,
-                                      movements: Array(movements[before...]))
+                try db.persistAdjust(inventory: inv, movements: Array(mov[before...]))
             } catch {
-                inventory = inventoryBefore
-                movements = movementsBefore
-                ids = idsBefore
                 return "在庫調整を保存できませんでした: \(error.localizedDescription)"
             }
-            return memo == "変化なし" ? nil : nil
+            inventory = inv
+            movements = mov
+            ids = seq
+            return nil
         }
     }
 
@@ -740,61 +905,97 @@ final class AppViewModel: ObservableObject {
     }
 
     func addGroup(id: String, label: String) -> String? {
+        if let e = adminPINError() { return e }
         guard id.range(of: "^[A-Za-z0-9_]+$", options: .regularExpression) != nil else { return "グループIDは半角英数字とアンダースコアのみ" }
         guard !groups.contains(where: { $0.groupId == id }) else { return "グループIDが重複しています" }
         guard !label.trimmingCharacters(in: .whitespaces).isEmpty else { return "ラベルは必須です" }
+        guard let db else { return "データベースを開けません" }
         let group = ProductGroup(groupId: id, label: label)
+        do {
+            try db.save(group: group)
+        } catch {
+            return "グループを保存できませんでした: \(error.localizedDescription)"
+        }
         groups.append(group)
-        try? db?.save(group: group)
         return nil
     }
 
     func renameGroup(id: String, label: String) -> String? {
+        if let e = adminPINError() { return e }
         guard !label.trimmingCharacters(in: .whitespaces).isEmpty else { return "ラベルは必須です" }
         guard let i = groups.firstIndex(where: { $0.groupId == id }) else { return "グループがありません" }
-        groups[i].label = label
-        try? db?.save(group: groups[i])
+        guard let db else { return "データベースを開けません" }
+        var updated = groups[i]
+        updated.label = label
+        do {
+            try db.save(group: updated)
+        } catch {
+            return "グループを保存できませんでした: \(error.localizedDescription)"
+        }
+        groups[i] = updated
         return nil
     }
 
     func deleteGroup(_ id: String) {
+        guard adminPINError() == nil else { message = "PINが違います"; return }
         guard !isGroupInUse(id) else { message = "使用中のグループは削除できません"; return }
+        guard let db else { message = "データベースを開けません"; return }
+        do {
+            try db.deleteGroup(id: id)
+        } catch {
+            message = "グループを削除できませんでした: \(error.localizedDescription)"
+            return
+        }
         groups.removeAll { $0.groupId == id }
-        try? db?.deleteGroup(id: id)
     }
 
     func isTypeLocked(_ typeId: String) -> Bool {
         inventory.contains { $0.typeId == typeId } || saleItems.contains { $0.typeId == typeId }
     }
 
-    func addType(typeId: String, name: String, prefix: String, digits: Int, mode: StockMode,
+    func createType(typeId: String, name: String, prefix: String, digits: Int, mode: StockMode,
                  labels: [String], groupId: String, nextNo: Int) -> String? {
-        guard typeId.range(of: "^[A-Za-z0-9_]+$", options: .regularExpression) != nil else { return "種類IDは半角英数字とアンダースコアのみ" }
-        guard !types.contains(where: { $0.typeId == typeId }) else { return "種類IDが重複しています" }
-        guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return "表示名は必須です" }
-        guard prefix.range(of: "^[A-Z0-9]+$", options: .regularExpression) != nil else { return "接頭辞は半角英大文字・数字のみ" }
-        guard !types.contains(where: { $0.idPrefix == prefix }) else { return "接頭辞が重複しています" }
-        guard digits >= 1 else { return "桁数は1以上" }
-        guard nextNo >= 1 else { return "開始番号は1以上" }
-        guard labelsPacked(labels) else { return "属性ラベルは左から詰めてください" }
-        let type = ProductType(typeId: typeId, name: name, idPrefix: prefix, idDigits: digits, stockMode: mode,
-                               attrLabel1: labels[0].isEmpty ? nil : labels[0],
-                               attrLabel2: labels[1].isEmpty ? nil : labels[1],
-                               attrLabel3: labels[2].isEmpty ? nil : labels[2],
-                               groupId: groupId.isEmpty ? nil : groupId, nextNo: nextNo,
-                               updatedAt: Date())
-        types.append(type)
-        try? db?.save(type: type)
-        return nil
+        if let e = adminPINError() { return e }
+        guard let db else { return "データベースを開けません" }
+        var updated = types
+        let result = addType(typeId: typeId, name: name, idPrefix: prefix, idDigits: digits,
+                                      stockMode: mode,
+                                      labels: labels.map { $0.isEmpty ? nil : $0 },
+                                      groupId: groupId.isEmpty ? nil : groupId,
+                                      startNo: nextNo,
+                                      correctPIN: pin ?? "", pin: verifiedPin,
+                                      types: &updated, groups: groups)
+        switch result {
+        case .failure(let m):
+            return m
+        case .success:
+            guard let type = updated.last else { return "種類を追加できませんでした" }
+            do {
+                try db.save(type: type)
+            } catch {
+                return "種類を保存できませんでした: \(error.localizedDescription)"
+            }
+            types = updated
+            return nil
+        }
     }
 
     func updateType(typeId: String, name: String, prefix: String, digits: Int, mode: StockMode,
                     labels: [String], groupId: String) -> String? {
+        if let e = adminPINError() { return e }
         guard let i = types.firstIndex(where: { $0.typeId == typeId }) else { return "種類がありません" }
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return "表示名は必須です" }
         guard prefix.range(of: "^[A-Z0-9]+$", options: .regularExpression) != nil else { return "接頭辞は半角英大文字・数字のみ" }
         guard digits >= 1 else { return "桁数は1以上" }
         guard labelsPacked(labels) else { return "属性ラベルは左から詰めてください" }
+        if !groupId.isEmpty, !groups.contains(where: { $0.groupId == groupId }) {
+            return "グループがありません"
+        }
+        // 値のある商品がある属性ラベルは空にできない（`basic.swift` の editType と同じ）。
+        for k in 0..<3 where labels[k].isEmpty
+            && inventory.contains(where: { $0.typeId == typeId && $0.attrs[k] != nil }) {
+            return "値のある商品があるため、属性ラベル\(k + 1)を空にできません"
+        }
 
         // 接頭辞・桁数・在庫モードは、商品または販売記録がある種類では変更できない（A-1）。
         if isTypeLocked(typeId) {
@@ -812,16 +1013,23 @@ final class AppViewModel: ObservableObject {
             }
         }
 
-        types[i].name = name
-        types[i].idPrefix = prefix
-        types[i].idDigits = digits
-        types[i].stockMode = mode
-        types[i].attrLabel1 = labels[0].isEmpty ? nil : labels[0]
-        types[i].attrLabel2 = labels[1].isEmpty ? nil : labels[1]
-        types[i].attrLabel3 = labels[2].isEmpty ? nil : labels[2]
-        types[i].groupId = groupId.isEmpty ? nil : groupId
-        types[i].updatedAt = Date()
-        try? db?.save(type: types[i])
+        var updated = types[i]
+        updated.name = name
+        updated.idPrefix = prefix
+        updated.idDigits = digits
+        updated.stockMode = mode
+        updated.attrLabel1 = labels[0].isEmpty ? nil : labels[0]
+        updated.attrLabel2 = labels[1].isEmpty ? nil : labels[1]
+        updated.attrLabel3 = labels[2].isEmpty ? nil : labels[2]
+        updated.groupId = groupId.isEmpty ? nil : groupId
+        updated.updatedAt = Date()
+        guard let db else { return "データベースを開けません" }
+        do {
+            try db.save(type: updated)
+        } catch {
+            return "種類を保存できませんでした: \(error.localizedDescription)"
+        }
+        types[i] = updated
         return nil
     }
 
@@ -832,59 +1040,71 @@ final class AppViewModel: ObservableObject {
         return true
     }
 
-    func addProduct(typeId: String, name: String, priceJpy: Int, priceSats: Int?,
+    /// 商品追加。検証・採番・`next_no`・初期在庫ログを 1 トランザクションで保存する（P-03）。
+    func createProduct(typeId: String, name: String, priceJpy: Int, priceSats: Int?,
                     attrs: [String?], stock: Int?, isPublic: Bool) -> String? {
-        guard let ti = types.firstIndex(where: { $0.typeId == typeId }) else { return "種類がありません" }
-        guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return "商品名は必須です" }
-        guard priceJpy >= 1 else { return "円価格は1以上" }
-        if let s = priceSats, s < 1 { return "sats価格は1以上" }
-        let t = types[ti]
-        let labels = [t.attrLabel1, t.attrLabel2, t.attrLabel3]
-        for k in 0..<3 where labels[k] == nil && attrs[k] != nil { return "ラベルのない属性に値があります" }
-        var initial: Int? = nil
-        switch t.stockMode {
-        case .none: initial = nil
-        case .unique:
-            guard let s = stock, (0...1).contains(s) else { return "一点物型の初期在庫は0または1" }
-            initial = s
-        case .counted:
-            guard let s = stock, s >= 0 else { return "初期在庫は0以上" }
-            initial = s
+        if let e = adminPINError() { return e }
+        guard let db else { return "データベースを開けません" }
+        var inv = inventory
+        var allTypes = types
+        var mov = movements
+        var seq = ids
+        let input = NewProductInput(typeId: typeId, name: name, priceJpy: priceJpy,
+                                    priceSats: priceSats,
+                                    attr1: attrs[0], attr2: attrs[1], attr3: attrs[2],
+                                    initialStock: stock, isPublic: isPublic)
+        let result = addProduct(input,
+                                         correctPIN: pin ?? "", pin: verifiedPin,
+                                         inventory: &inv, types: &allTypes,
+                                         movements: &mov, ids: &seq, at: Date())
+        switch result {
+        case .failure(let problems):
+            return problems.joined(separator: "\n")
+        case .success(let product):
+            guard let type = allTypes.first(where: { $0.typeId == typeId }) else {
+                return "種類がありません"
+            }
+            let movement = mov.last.flatMap { $0.productId == product.id ? $0 : nil }
+            do {
+                try db.persistProductAdd(product: product, type: type, movement: movement)
+            } catch {
+                return "商品を保存できませんでした: \(error.localizedDescription)"
+            }
+            inventory = inv
+            types = allTypes
+            movements = mov
+            ids = seq
+            return nil
         }
-        guard let newId = ids.makeProductID(for: t) else { return "番号が桁数を超えています" }
-        let product = Product(id: newId, typeId: typeId, name: name, priceJpy: priceJpy, priceSats: priceSats,
-                              stock: initial, attr1: attrs[0], attr2: attrs[1], attr3: attrs[2],
-                              imageRef: nil, isPublic: isPublic, updatedAt: Date())
-        inventory.append(product)
-        types[ti].nextNo += 1
-        types[ti].updatedAt = Date()
-        try? db?.save(type: types[ti])
-        try? db?.save(product: product)
-        if let s = initial, s > 0 {
-            let m = StockMovement(id: ids.nextMovementID(), productId: newId,
-                                  delta: s, reason: .initial, saleId: nil, at: Date())
-            movements.append(m)
-            try? db?.save(movement: m)
-        }
-        return nil
     }
 
     func updateProduct(id: String, name: String, priceJpy: Int, priceSats: Int?,
                        attrs: [String?], isPublic: Bool) -> String? {
-        guard let i = inventory.firstIndex(where: { $0.id == id }) else { return "商品がありません" }
+        if let e = adminPINError() { return e }
+        guard let db else { return "データベースを開けません" }
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return "商品名は必須です" }
-        guard priceJpy >= 1 else { return "円価格は1以上" }
-        if let s = priceSats, s < 1 { return "sats価格は1以上" }
-        inventory[i].name = name
-        inventory[i].priceJpy = priceJpy
-        inventory[i].priceSats = priceSats
-        inventory[i].attr1 = attrs[0]
-        inventory[i].attr2 = attrs[1]
-        inventory[i].attr3 = attrs[2]
-        inventory[i].isPublic = isPublic
-        inventory[i].updatedAt = Date()
-        try? db?.save(product: inventory[i])
-        return nil
+        // 検証は編集画面と CSV 取り込みで共有する（A-1、`basic.swift` の editProduct）。
+        var updated = inventory
+        let result = editProduct(productId: id, name: name, priceJpy: priceJpy,
+                                 priceSats: priceSats, attrs: attrs, isPublic: isPublic,
+                                 correctPIN: pin ?? "", pin: verifiedPin,
+                                 inventory: &updated, types: types)
+        switch result {
+        case .failure(let m):
+            return m
+        case .success:
+            guard let i = updated.firstIndex(where: { $0.id == id }) else {
+                return "商品がありません"
+            }
+            updated[i].updatedAt = Date()
+            do {
+                try db.save(product: updated[i])
+            } catch {
+                return "商品を保存できませんでした: \(error.localizedDescription)"
+            }
+            inventory = updated
+            return nil
+        }
     }
 
     /// 画像ファイルが同梱されていない登録商品（A-1）。
@@ -908,6 +1128,9 @@ final class AppViewModel: ObservableObject {
 
     /// 検証済みの計画を、1トランザクションでDBへ反映する。
     func applyCSVImport(_ plan: CSVImportPlan) -> [CSVError] {
+        if let e = adminPINError() {
+            return [CSVError(row: 0, column: "PIN", reason: e)]
+        }
         guard plan.hasChanges else {
             message = "CSVの内容に変更はありません"
             return []
@@ -960,24 +1183,16 @@ final class AppViewModel: ObservableObject {
 
     // MARK: 集計
 
-    func completedSales(from: Date, to: Date) -> [Sale] {
-        let a = DayKey.string(from: min(from, to)), b = DayKey.string(from: max(from, to))
-        return sales.filter {
-            guard $0.status == .completed, let at = $0.completedAt else { return false }
-            let d = DayKey.string(from: at)
-            return d >= a && d <= b
-        }
+    func completedSales(from: Date?, to: Date?) -> [Sale] {
+        salesIn(from: from, to: to, in: sales)
+            .filter { $0.status == .completed && $0.completedAt != nil }
     }
 
-    func voidedSales(from: Date, to: Date, confirmedOnly: Bool) -> [Sale] {
-        let a = DayKey.string(from: min(from, to)), b = DayKey.string(from: max(from, to))
-        return sales.filter {
+    func voidedSales(from: Date?, to: Date?, confirmedOnly: Bool) -> [Sale] {
+        salesIn(from: from, to: to, in: sales).filter {
             guard $0.status == .voided else { return false }
             let isConfirmedAbort = $0.completedAt == nil
-            guard isConfirmedAbort == confirmedOnly else { return false }
-            guard let at = $0.completedAt ?? $0.confirmedAt else { return false }
-            let d = DayKey.string(from: at)
-            return d >= a && d <= b
+            return isConfirmedAbort == confirmedOnly
         }
     }
 
@@ -994,7 +1209,7 @@ final class AppViewModel: ObservableObject {
             }
     }
 
-    func reportRows(from: Date, to: Date) -> [ReportRow] {
+    func reportRows(from: Date?, to: Date?) -> [ReportRow] {
         let ids = Set(completedSales(from: from, to: to).map { $0.id })
         var dict: [String: ReportRow] = [:]
         for item in saleItems where ids.contains(item.saleId) {
@@ -1013,6 +1228,17 @@ final class AppViewModel: ObservableObject {
         return dict.values.sorted { $0.id < $1.id }
     }
 
+    /// 期間全体＋日ごとの小計（A-8）。nil は上限・下限なし（全期間）。
+    func periodSummary(from: Date?, to: Date?) -> PeriodSummary {
+        summarizeRange(sales, items: saleItems, from: from, to: to)
+    }
+
+    /// 日ごとの現金照合（A-8）。期間全体では行わない。
+    func cashReconciliation(day: Date, float: Int, actual: Int) -> CashReconciliation {
+        reconcileCash(day: day, float: float, actual: actual,
+                               sales: sales, items: saleItems)
+    }
+
     // MARK: エクスポート
 
     private func exportFolderName() -> String {
@@ -1023,6 +1249,7 @@ final class AppViewModel: ObservableObject {
 
     @MainActor
     func exportAll() {
+        guard requireAdmin("エクスポート") else { return }
         guard let dir = CSVExportPanel.chooseDirectory() else { return }
         let folder = dir.appendingPathComponent(exportFolderName(), isDirectory: true)
         do {
@@ -1077,6 +1304,7 @@ final class AppViewModel: ObservableObject {
 
     @MainActor
     func exportPriceList() {
+        guard requireAdmin("価格一覧CSV") else { return }
         let csv = CSVExport.priceListCSV(inventory)
         if let url = CSVExportPanel.save(csv, suggestedName: "price_list.csv") {
             message = CSVExportPanel.usesShareSheet
@@ -1089,6 +1317,7 @@ final class AppViewModel: ObservableObject {
 
     @MainActor
     func exportMaster() {
+        guard requireAdmin("マスタ書き出し") else { return }
         guard let dir = CSVExportPanel.chooseDirectory() else { return }
         let folder = dir.appendingPathComponent(exportFolderName(), isDirectory: true)
         do {
@@ -1124,6 +1353,7 @@ final class AppViewModel: ObservableObject {
     /// 取り込み用の空CSV雛形（A-18）。ヘッダだけの3ファイルを書き出す。
     @MainActor
     func exportCSVTemplates() {
+        guard requireAdmin("CSV雛形") else { return }
         guard let dir = CSVExportPanel.chooseDirectory() else { return }
         let folder = dir.appendingPathComponent("craftill-csv-template", isDirectory: true)
         do {
@@ -1147,6 +1377,7 @@ final class AppViewModel: ObservableObject {
 
     @MainActor
     func exportSettlement(from: Date, to: Date) {
+        guard requireAdmin("グループ別精算CSV") else { return }
         let csv = CSVExport.settlementCSV(reportRows(from: from, to: to), from: from, to: to)
         if let url = CSVExportPanel.save(csv, suggestedName: "settlement.csv") {
             message = CSVExportPanel.usesShareSheet
@@ -1157,6 +1388,7 @@ final class AppViewModel: ObservableObject {
 
     @MainActor
     func exportSatsReconciliation(from: Date, to: Date) {
+        guard requireAdmin("sats照合CSV") else { return }
         let csv = CSVExport.satsReconciliationCSV(satsReconciliationSales(from: from, to: to))
         if let url = CSVExportPanel.save(csv, suggestedName: "sats_reconciliation.csv") {
             message = CSVExportPanel.usesShareSheet
@@ -1165,15 +1397,63 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    // MARK: 公開サイト送信（仮）
+    // MARK: 公開サイト送信（A-14）
 
+    func saveSyncSettings() {
+        let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = syncToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        SyncSettings.endpoint = endpoint
+        let tokenSaved = SyncSettings.saveToken(token)
+        syncEndpoint = endpoint
+        syncToken = token
+        message = tokenSaved
+            ? "送信先を保存しました"
+            : "送信先は保存しましたが、トークンを Keychain に保存できませんでした"
+    }
+
+    /// 実際にスナップショットを送信する。成功ログは HTTP 2xx のときだけ残す。
+    /// 失敗しても会計・在庫には影響させない（A-14）。
     func sendSnapshot() {
-        let ok = isOnline
-        let entry = SyncLogEntry(id: ids.nextLogID(), at: Date(),
-                                 result: ok ? .success : .failed,
-                                 detail: ok ? "" : "通信エラー")
-        syncLog.insert(entry, at: 0)
-        try? db?.save(sync: entry)
-        if ok { lastSyncAt = Date() }
+        let snapshot = makeSnapshot(types: types, inventory: inventory, now: Date())
+
+        let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else {
+            recordSyncResult(snapshot: snapshot, error: "送信先が未設定です（送信先URLを保存してください）")
+            return
+        }
+        guard let url = URL(string: endpoint), url.scheme != nil else {
+            recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です: \(endpoint)")
+            return
+        }
+        guard isOnline else {
+            recordSyncResult(snapshot: snapshot, error: "通信エラー（オフライン）")
+            return
+        }
+
+        message = "送信中…"
+        let sender = SnapshotSender(endpoint: url, token: syncToken)
+        sender.send(snapshot) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.recordSyncResult(snapshot: snapshot, error: nil)
+                    self.message = "公開サイトへ送信しました（商品 \(snapshot.products.count)件）"
+                case .failure(let error):
+                    self.recordSyncResult(snapshot: snapshot, error: error.localizedDescription)
+                    self.message = "送信に失敗しました: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func recordSyncResult(snapshot: Snapshot, error: String?) {
+        let entry = recordSync(&syncLog, ids: &ids, snapshot: snapshot, error: error, at: Date())
+        do {
+            try db?.save(sync: entry)
+        } catch {
+            message = "送信ログを保存できませんでした: \(error.localizedDescription)"
+        }
+        if error == nil { lastSyncAt = entry.at }
     }
 }

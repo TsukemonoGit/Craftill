@@ -102,15 +102,28 @@ struct Product: Codable, Equatable, Identifiable {
         return parts.joined(separator: " ")
     }
 
+    /// 同梱画像のファイル名。`image_ref` が無い商品は、商品IDから導出する（A-17）。
+    /// 画像ビルドスクリプトは `originals/` の原本を「商品ID.jpg」で出力するため、
+    /// 商品追加・CSV取り込みで `image_ref` が空でも画像を表示できる。
+    var bundledImageName: String {
+        if let imageRef, !imageRef.isEmpty { return imageRef }
+        return "\(id).jpg"
+    }
+
     /// 同梱画像が実在するか（A-1、A-17）。
     /// `image_ref` が非 nil でもファイルが無ければ「画像なし」として扱う。
     var hasBundledImage: Bool {
-        guard let imageRef, !imageRef.isEmpty,
-              let url = Bundle.main.url(forResource: imageRef, withExtension: nil) else {
-            return false
-        }
-        return FileManager.default.fileExists(atPath: url.path)
+        bundledImageURL(named: bundledImageName) != nil
     }
+}
+
+/// 同梱画像の URL。Xcode がリソースを直下に置く場合と、
+/// `Images/` サブディレクトリを保つ場合の両方に対応する（A-17）。
+func bundledImageURL(named name: String) -> URL? {
+    guard !name.isEmpty else { return nil }
+    let bundle = Bundle.main
+    return bundle.url(forResource: name, withExtension: nil)
+        ?? bundle.url(forResource: name, withExtension: nil, subdirectory: "Images")
 }
 
 // ════════════════════════════════════════════════════════════
@@ -268,7 +281,7 @@ struct SnapshotProduct: Codable, Equatable {
     let priceSats: Int?        // 空の場合あり
     let attrs: [String?]       // 項目の並びは attrLabels に合わせる
     let stock: Int?            // 在庫管理なし型は nil
-    let hasImage: Bool         // 保持項目ではない。imageRef から導出する（A-14）
+    let hasImage: Bool         // 保持項目ではない。`bundledImageName` の実在から導出する（A-14）
 }
 
 struct Snapshot: Codable, Equatable {

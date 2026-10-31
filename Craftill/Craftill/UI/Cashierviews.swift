@@ -11,8 +11,9 @@ struct RegisterView: View {
     var body: some View {
         VStack(spacing: 0) {
             TopBar("レジ", state: compact ? nil : vm.saleState.label) {
-                Toggle("通信", isOn: $vm.isOnline)
-                    .toggleStyle(.switch)
+                Text(vm.isOnline ? "通信あり" : "通信なし")
+                    .font(.caption)
+                    .foregroundColor(vm.isOnline ? .secondary : .orange)
                 Button("メニュー") { vm.openMenu() }
                     .buttonStyle(.app)
                     .frame(maxWidth: compact ? 110 : 160)
@@ -63,28 +64,59 @@ struct RegisterView: View {
                     }
                     Button("野良追加") { vm.showAdhoc = true }
                         .buttonStyle(.app)
+                    suggestionRow
                 }
             } else {
-                HStack(spacing: 8) {
-                    Button("カメラ読み取り") { showScanner = true }
-                        .buttonStyle(.app)
-                        .frame(minWidth: 120, maxWidth: 180)
-                    TextField("商品ID手動入力（例: mk8）", text: $manualID)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(minWidth: 120)
-                        .onSubmit { submitID() }
-                    Button("追加") { submitID() }
-                        .buttonStyle(.app)
-                        .frame(minWidth: 64, maxWidth: 90)
-                    Button("野良追加") { vm.showAdhoc = true }
-                        .buttonStyle(.app)
-                        .frame(minWidth: 88, maxWidth: 130)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Button("カメラ読み取り") { showScanner = true }
+                            .buttonStyle(.app)
+                            .frame(minWidth: 120, maxWidth: 180)
+                        TextField("商品ID手動入力（例: mk8）", text: $manualID)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(minWidth: 120)
+                            .onSubmit { submitID() }
+                        Button("追加") { submitID() }
+                            .buttonStyle(.app)
+                            .frame(minWidth: 64, maxWidth: 90)
+                        Button("野良追加") { vm.showAdhoc = true }
+                            .buttonStyle(.app)
+                            .frame(minWidth: 88, maxWidth: 130)
+                    }
+                    suggestionRow
                 }
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+    }
+
+    /// 入力中の在庫候補（A-2、C-6 #69）。ID・商品名の部分一致で絞る。
+    private var suggestions: [Product] {
+        let raw = manualID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return [] }
+        let normalized = vm.normalizeID(raw)
+        return Array(vm.inventory.filter {
+            $0.id.contains(normalized) || $0.name.localizedCaseInsensitiveContains(raw)
+        }.prefix(6))
+    }
+
+    @ViewBuilder
+    private var suggestionRow: some View {
+        if !suggestions.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(suggestions) { p in
+                        Button("\(p.id)　\(p.name)") {
+                            manualID = ""
+                            vm.addToCart(p)
+                        }
+                        .buttonStyle(.app)
+                    }
+                }
+            }
+        }
     }
 
     private func submitID() {
@@ -186,7 +218,14 @@ struct AdhocSheet: View {
                         }
                         .labelsHidden()
                     }
-                    Stepper("数量: \(qty)", value: $qty, in: 1...999)
+                    HStack(spacing: 8) {
+                        Text("数量").font(.caption).foregroundColor(.secondary)
+                        Button("−") { qty = max(1, qty - 1) }.buttonStyle(.app)
+                        TextField("数量", value: $qty, format: .number)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 100)
+                        Button("＋") { qty += 1 }.buttonStyle(.app)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -374,7 +413,7 @@ struct CashEntryView: View {
 
     private var keypadPanel: some View {
         VStack(alignment: .leading, spacing: 12) {
-            KeypadView { vm.pressKey($0) }
+            KeypadView(keyboard: true) { vm.pressKey($0) }
             HStack(spacing: 8) {
                 Button("＋1,000円") { vm.addCash(1_000) }.buttonStyle(.app)
                 Button("＋5,000円") { vm.addCash(5_000) }.buttonStyle(.app)

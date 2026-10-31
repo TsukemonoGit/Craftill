@@ -223,9 +223,9 @@ final class Database {
             item_id         TEXT PRIMARY KEY,
             sale_id         TEXT NOT NULL REFERENCES sales(sale_id),
             item_type       TEXT NOT NULL,
-            type_id         TEXT,
-            group_id        TEXT,
-            product_id      TEXT,
+            type_id         TEXT REFERENCES product_types(type_id),
+            group_id        TEXT REFERENCES product_groups(group_id),
+            product_id      TEXT REFERENCES products(product_id),
             qty             INTEGER NOT NULL,
             unit_price_jpy  INTEGER NOT NULL,
             unit_price_sats INTEGER,
@@ -235,10 +235,10 @@ final class Database {
 
         CREATE TABLE IF NOT EXISTS stock_movements (
             id         TEXT PRIMARY KEY,
-            product_id TEXT NOT NULL,
+            product_id TEXT NOT NULL REFERENCES products(product_id),
             delta      INTEGER NOT NULL,
             reason     TEXT NOT NULL,
-            sale_id    TEXT,
+            sale_id    TEXT REFERENCES sales(sale_id),
             at         TEXT NOT NULL
         );
 
@@ -253,6 +253,76 @@ final class Database {
         CREATE INDEX IF NOT EXISTS idx_items_sale ON sale_items(sale_id);
         CREATE INDEX IF NOT EXISTS idx_movements_product ON stock_movements(product_id);
         """)
+
+        // 版付きマイグレーション（A-13、P-17）。
+        // 既存 DB は user_version = 0 のままなので、FK の有無を確認して組み直す。
+        let version = try scalarInt("PRAGMA user_version;")
+        if version < 1 {
+            try addForeignKeysIfNeeded()
+            try exec("PRAGMA user_version = 1;")
+        }
+    }
+
+    /// `sale_items` / `stock_movements` に FK が無い既存 DB を、FK 付きの定義へ組み直す。
+    /// データはそのままコピーする。失敗時はロールバックし、元のテーブルを残す。
+    private func addForeignKeysIfNeeded() throws {
+        let itemFKs = try query("PRAGMA foreign_key_list(sale_items);") { _ in true }
+        let movementFKs = try query("PRAGMA foreign_key_list(stock_movements);") { _ in true }
+        guard itemFKs.isEmpty || movementFKs.isEmpty else { return }
+
+        // FK を一時的に無効化して組み直す（トランザクションの外で切り替える）。
+        try exec("PRAGMA foreign_keys = OFF;")
+        defer { try? exec("PRAGMA foreign_keys = ON;") }
+
+        try transaction {
+            if itemFKs.isEmpty {
+                try exec("ALTER TABLE sale_items RENAME TO sale_items_old;")
+                try exec("""
+                CREATE TABLE sale_items (
+                    item_id         TEXT PRIMARY KEY,
+                    sale_id         TEXT NOT NULL REFERENCES sales(sale_id),
+                    item_type       TEXT NOT NULL,
+                    type_id         TEXT REFERENCES product_types(type_id),
+                    group_id        TEXT REFERENCES product_groups(group_id),
+                    product_id      TEXT REFERENCES products(product_id),
+                    qty             INTEGER NOT NULL,
+                    unit_price_jpy  INTEGER NOT NULL,
+                    unit_price_sats INTEGER,
+                    paid_in         TEXT NOT NULL,
+                    name_snapshot   TEXT NOT NULL
+                );
+                """)
+                try exec("""
+                INSERT INTO sale_items
+                (item_id, sale_id, item_type, type_id, group_id, product_id,
+                 qty, unit_price_jpy, unit_price_sats, paid_in, name_snapshot)
+                SELECT item_id, sale_id, item_type, type_id, group_id, product_id,
+                       qty, unit_price_jpy, unit_price_sats, paid_in, name_snapshot
+                FROM sale_items_old;
+                """)
+                try exec("DROP TABLE sale_items_old;")
+            }
+            if movementFKs.isEmpty {
+                try exec("ALTER TABLE stock_movements RENAME TO stock_movements_old;")
+                try exec("""
+                CREATE TABLE stock_movements (
+                    id         TEXT PRIMARY KEY,
+                    product_id TEXT NOT NULL REFERENCES products(product_id),
+                    delta      INTEGER NOT NULL,
+                    reason     TEXT NOT NULL,
+                    sale_id    TEXT REFERENCES sales(sale_id),
+                    at         TEXT NOT NULL
+                );
+                """)
+                try exec("""
+                INSERT INTO stock_movements (id, product_id, delta, reason, sale_id, at)
+                SELECT id, product_id, delta, reason, sale_id, at FROM stock_movements_old;
+                """)
+                try exec("DROP TABLE stock_movements_old;")
+            }
+            try exec("CREATE INDEX IF NOT EXISTS idx_items_sale ON sale_items(sale_id);")
+            try exec("CREATE INDEX IF NOT EXISTS idx_movements_product ON stock_movements(product_id);")
+        }
     }
 
     // MARK: - 初期データ（テスト商品）
@@ -522,11 +592,24 @@ final class Database {
     // MARK: - 書き込み（会計・在庫）
 
     private func insert(sale: Sale) throws {
+        // `INSERT OR REPLACE` は既存行を DELETE してから INSERT する。
+        // `sale_items` の FK は文末検査なので直ちには失敗しないが、子行への
+        // 副作用を避けるため、行を残したまま更新する UPSERT を使う。
         try run("""
-        INSERT OR REPLACE INTO sales
+        INSERT INTO sales
         (sale_id, status, method, total_jpy, total_sats,
          received_jpy, change_jpy, confirmed_at, refunded, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(sale_id) DO UPDATE SET
+            status = excluded.status,
+            method = excluded.method,
+            total_jpy = excluded.total_jpy,
+            total_sats = excluded.total_sats,
+            received_jpy = excluded.received_jpy,
+            change_jpy = excluded.change_jpy,
+            confirmed_at = excluded.confirmed_at,
+            refunded = excluded.refunded,
+            completed_at = excluded.completed_at;
         """) { s in
             bind(s, 1, sale.id)
             bind(s, 2, sale.status.rawValue)
@@ -594,6 +677,16 @@ final class Database {
             for i in items { try insert(item: i) }
             try updateStocks(inventory)
             for m in movements { try save(movement: m) }
+        }
+    }
+
+    /// 商品追加（product + 種類の next_no + 初期在庫ログ）を1トランザクションで保存する（P-03）。
+    func persistProductAdd(product: Product, type: ProductType,
+                           movement: StockMovement?) throws {
+        try transaction {
+            try save(product: product)
+            try save(type: type)
+            if let movement { try save(movement: movement) }
         }
     }
 

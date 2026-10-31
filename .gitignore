@@ -69,3 +69,12 @@ __pycache__/
 
 
 *.DS_Store
+
+# A-17: 原本はコミットしない（別の場所へバックアップする）
+/originals/*
+!/originals/README.md
+# A-17: 生成画像はスクリプトで再生成する
+/Craftill/Craftill/Images/*.jpg
+/web/public/images/*.jpg
+/web/public/images/manifest.csv
+/web/public/images/version.txt

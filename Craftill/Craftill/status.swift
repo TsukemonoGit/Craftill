@@ -62,6 +62,14 @@ enum SaleEvent: Equatable {
 
 /// 遷移を1つ判断する。**状態は書き換えない**（返り値の `nextState` を使う）
 func move(_ e: SaleEvent, in ctx: SaleContext) -> Move {
+    // sats の入金確認後は、どの状態から中断しても PIN と記録が必要（A-19-2）。
+    // 通常は `mixedCashInput` だが、完了時の保存に失敗して `satsWaiting` に
+    // 残った場合も取りこぼさない。
+    if e == .suspend, ctx.satsConfirmedAt != nil,
+       ctx.state != .idle, ctx.state != .done, ctx.state != .suspended {
+        return .needsPIN(pinReason(), .suspended)
+    }
+
     switch ctx.state {
 
     case .idle:
@@ -117,7 +125,11 @@ func move(_ e: SaleEvent, in ctx: SaleContext) -> Move {
             return t.cashForSats == 0
                 ? .needsConfirm(tapDoneReason(in: ctx), .done)
                 : .needsConfirm(tapDoneReason(in: ctx), .mixedCashInput)
-        case .changeMethod: return .allowed(.choosingPayment)   // A-19-8：2段の1つ目
+        case .changeMethod:
+            // 済ボタンで入金確認済みなら、方法は変更できない（A-19-8）。
+            return ctx.satsConfirmedAt == nil
+                ? .allowed(.choosingPayment)
+                : .rejected("satsの入金確認済みのため、支払方法は変更できません")
         case .suspend:      return .needsConfirm(cancelReason(in: ctx), .suspended)
         default:            return .rejected("請求額が決まったので、方法や商品は変えられません")
         }
