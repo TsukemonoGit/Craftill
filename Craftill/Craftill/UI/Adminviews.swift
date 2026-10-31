@@ -95,6 +95,7 @@ struct InitialLaunchView: View {
 
 struct MenuView: View {
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
 
     private struct Item: Identifiable {
         let id: String
@@ -103,29 +104,71 @@ struct MenuView: View {
         let action: () -> Void
     }
 
-    private var items: [Item] {
+    private struct Section: Identifiable {
+        let id: String
+        let title: String
+        let note: String
+        let items: [Item]
+    }
+
+    private struct Step {
+        let number: String
+        let text: String
+    }
+
+    private let steps = [
+        Step(number: "1", text: "商品を読み取る"),
+        Step(number: "2", text: "支払方法を選ぶ"),
+        Step(number: "3", text: "会計を確定する")
+    ]
+
+    /// 本日の完了会計数（メニューを開いた時点の目安）。
+    private var todaySaleCount: Int {
+        let now = Date()
+        return vm.completedSales(from: now, to: now).count
+    }
+
+    private var sections: [Section] {
         [
-            Item(id: "register", title: "レジへ戻る", note: "") { vm.go(.register) },
-            Item(id: "edit", title: "編集（グループ・種類・商品）", note: "待機中のみ・PIN必須") {
-                vm.requirePin("編集") { vm.go(.edit) }
-            },
-            Item(id: "csv", title: "CSV取り込み・書き出し", note: "取り込みは待機中のみ・PIN必須") {
-                vm.requirePin("CSV取り込み・書き出し") { vm.go(.csvImport) }
-            },
-            Item(id: "report", title: "集計（日次・期間全体）", note: "表示はPIN不要") { vm.go(.report) },
-            Item(id: "history", title: "販売履歴・取消", note: "取消・返金済み設定はPIN必須") { vm.go(.salesHistory) },
-            Item(id: "stock", title: "手動在庫調整", note: "PIN必須") {
-                vm.requirePin("手動在庫調整") { vm.go(.stockAdjust) }
-            },
-            Item(id: "price", title: "価格一覧・画像なしID一覧", note: "") { vm.go(.priceList) },
-            Item(id: "qr", title: "QRラベル生成", note: "商品IDのQR＋ID文字（印刷用）") { vm.go(.qrLabels) },
-            Item(id: "sync", title: "公開サイトへ送信・送信ログ", note: "") { vm.go(.sync) },
-            Item(id: "reset", title: "データ初期化（テスト用）", note: "全削除・PIN必須") {
-                vm.requirePin("データ初期化") { vm.go(.resetData) }
-            },
-            Item(id: "export", title: "エクスポート（販売・在庫・精算CSV）", note: "PIN必須") {
-                vm.requirePin("エクスポート") { vm.exportAll() }
-            }
+            Section(id: "daily", title: "会計・集計",
+                    note: "レジを閉めたあとの確認・訂正", items: [
+                Item(id: "report", title: "集計（日次・期間全体）", note: "表示はPIN不要") {
+                    vm.go(.report)
+                },
+                Item(id: "history", title: "販売履歴・取消", note: "取消・返金済み設定はPIN必須") {
+                    vm.go(.salesHistory)
+                },
+                Item(id: "stock", title: "手動在庫調整", note: "PIN必須") {
+                    vm.requirePin("手動在庫調整") { vm.go(.stockAdjust) }
+                }
+            ]),
+            Section(id: "master", title: "商品マスタ",
+                    note: "商品が未登録なら、まずここで準備", items: [
+                Item(id: "edit", title: "編集（グループ・種類・商品）", note: "待機中のみ・PIN必須") {
+                    vm.requirePin("編集") { vm.go(.edit) }
+                },
+                Item(id: "csv", title: "CSV取り込み・書き出し", note: "取り込みは待機中のみ・PIN必須") {
+                    vm.requirePin("CSV取り込み・書き出し") { vm.go(.csvImport) }
+                },
+                Item(id: "price", title: "価格一覧・画像なしID一覧", note: "") {
+                    vm.go(.priceList)
+                },
+                Item(id: "qr", title: "QRラベル生成", note: "商品IDのQR＋ID文字（印刷用）") {
+                    vm.go(.qrLabels)
+                }
+            ]),
+            Section(id: "maintenance", title: "連携・バックアップ・保守",
+                    note: "公開サイトへの送信、CSV出力、テスト用の初期化", items: [
+                Item(id: "sync", title: "公開サイトへ送信・送信ログ", note: "") {
+                    vm.go(.sync)
+                },
+                Item(id: "export", title: "エクスポート（販売・在庫・精算CSV）", note: "PIN必須") {
+                    vm.requirePin("エクスポート") { vm.exportAll() }
+                },
+                Item(id: "reset", title: "データ初期化（テスト用）", note: "全削除・PIN必須") {
+                    vm.requirePin("データ初期化") { vm.go(.resetData) }
+                }
+            ])
         ]
     }
 
@@ -133,27 +176,128 @@ struct MenuView: View {
         VStack(spacing: 0) {
             TopBar("機能メニュー", state: vm.saleState.label)
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 16)],
-                          alignment: .leading, spacing: 16) {
-                    ForEach(items) { item in
-                        Button { item.action() } label: {
-                            VStack(spacing: 6) {
-                                Text(item.title).font(.system(size: 16, weight: .bold)).multilineTextAlignment(.center)
-                                if !item.note.isEmpty {
-                                    Text(item.note).font(.caption).foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 22) {
+                    startCard
+                    if vm.inventory.isEmpty { setupHint }
+                    ForEach(sections) { section in
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(section.title).font(.headline)
+                                Text(section.note).font(.caption).foregroundColor(.secondary)
+                            }
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 14)],
+                                      alignment: .leading, spacing: 12) {
+                                ForEach(section.items) { item in
+                                    menuButton(item)
                                 }
                             }
-                            .frame(maxWidth: .infinity, minHeight: 110)
                         }
-                        .buttonStyle(AppButtonStyle(primary: item.id == "register"))
                     }
+                    Text("メニューは待機中（カートが空）のみ開けます。PIN必須の操作は実行時にPIN入力します。")
+                        .font(.caption).foregroundColor(.secondary)
                 }
                 .padding(24)
-                Text("メニューは待機中（カートが空）のみ開ける。PIN必須の操作は実行時にPIN入力。")
-                    .font(.caption).foregroundColor(.secondary)
+                .frame(maxWidth: 1100, alignment: .leading)
             }
             MessageBar()
         }
+    }
+
+    // MARK: レジ開始カード
+
+    private var startCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if compact {
+                VStack(alignment: .leading, spacing: 10) {
+                    startTitle
+                    Button("レジを開く") { vm.go(.register) }
+                        .buttonStyle(.appPrimary)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                }
+            } else {
+                HStack(alignment: .center, spacing: 16) {
+                    startTitle
+                    Spacer(minLength: 8)
+                    Button("レジを開く") { vm.go(.register) }
+                        .buttonStyle(.appPrimary)
+                        .frame(minWidth: 140, minHeight: 52)
+                }
+            }
+            stepsRow
+            HStack(spacing: 16) {
+                Text("商品 \(vm.inventory.count)件")
+                Text("本日の会計 \(todaySaleCount)件")
+                Text(vm.isOnline ? "通信あり" : "通信なし")
+                    .foregroundColor(vm.isOnline ? .secondary : .orange)
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.4)))
+    }
+
+    private var startTitle: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("レジを開始する").font(.title2.bold())
+            Text("商品を読み取って、支払方法を選び、会計を確定します。")
+                .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var stepsRow: some View {
+        if compact {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(steps, id: \.number) { step in
+                    stepLabel(step)
+                }
+            }
+        } else {
+            HStack(spacing: 10) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                    stepLabel(step)
+                    if index < steps.count - 1 {
+                        Image(systemName: "arrow.right").foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func stepLabel(_ step: Step) -> some View {
+        HStack(spacing: 6) {
+            Text(step.number)
+                .font(.caption.bold())
+                .foregroundColor(.white)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.accentColor))
+            Text(step.text).font(.callout)
+        }
+    }
+
+    private var setupHint: some View {
+        Text("商品がまだ登録されていません。「商品マスタ」の「編集」で登録するか、「CSV取り込み」で読み込んでください。")
+            .font(.callout)
+            .foregroundColor(.orange)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
+    }
+
+    private func menuButton(_ item: Item) -> some View {
+        Button { item.action() } label: {
+            VStack(spacing: 6) {
+                Text(item.title).font(.system(size: 16, weight: .bold)).multilineTextAlignment(.center)
+                if !item.note.isEmpty {
+                    Text(item.note).font(.caption).foregroundColor(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 96)
+        }
+        .buttonStyle(AppButtonStyle(primary: false))
     }
 }
 

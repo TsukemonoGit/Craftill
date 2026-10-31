@@ -129,7 +129,7 @@ struct RegisterView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("カート").font(.headline)
             if vm.cart.isEmpty {
-                Text("カートは空です\n商品を追加すると「スキャン中」へ遷移")
+                Text("カートは空です\nQRを読み取る／商品をタップ／IDを手入力\nのいずれかで追加してください")
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, minHeight: 160)
