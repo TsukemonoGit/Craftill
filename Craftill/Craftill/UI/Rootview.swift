@@ -24,6 +24,7 @@ struct RootView: View {
                 AdhocSheet().environmentObject(vm)
             }
         }
+        .onAppear { ProductImageFolder.activate() }
         .environmentObject(vm)
     }
 
@@ -42,6 +43,7 @@ struct RootView: View {
         case .qrLabels: QRLabelView()
         case .sync: SyncView()
         case .resetData: ResetDataView()
+        case .imageFolder: ImageFolderView()
         }
     }
 

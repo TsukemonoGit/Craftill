@@ -11,7 +11,7 @@ import UIKit
 
 enum Screen: Hashable {
     case initialLaunch, register, menu, edit, csvImport, report
-    case salesHistory, stockAdjust, priceList, qrLabels, sync, resetData
+    case salesHistory, stockAdjust, priceList, qrLabels, sync, resetData, imageFolder
 }
 
 enum Dialog: Identifiable {

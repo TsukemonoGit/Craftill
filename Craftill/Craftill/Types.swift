@@ -127,8 +127,7 @@ struct Product: Codable, Equatable, Identifiable {
 /// 無ければ Xcode に同梱した画像を探す（A-17）。
 func bundledImageURL(named name: String) -> URL? {
     guard !name.isEmpty else { return nil }
-    let runtime = ProductImageStore.url(fileName: name)
-    if FileManager.default.fileExists(atPath: runtime.path) {
+    if let runtime = ProductImageStore.displayURL(fileName: name) {
         return runtime
     }
     return bundledOnlyImageURL(named: name)

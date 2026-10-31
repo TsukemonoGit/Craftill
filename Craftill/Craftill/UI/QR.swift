@@ -95,7 +95,7 @@ struct QRLabelView: View {
                         actionButtons
                     }
                 }
-                Text("QRの中身＝商品ID。ID文字も併記しています。印刷して商品に貼ったあと、商品の編集画面から写真を撮影・選択できます。公開サイト用は商品IDをファイル名にして originals/ に保存します（例: ST-004.jpg）。")
+                Text("QRの中身＝商品ID。ID文字も併記しています。印刷して商品に貼ったあと、商品の編集画面から写真を撮影・選択できます。公開サイト用は「画像の保存先」で originals/ を選ぶと、同じ写真がビルド用に保存されます。")
                     .font(.caption).foregroundColor(.secondary)
 
                 ScrollView {
@@ -125,7 +125,7 @@ struct QRLabelView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("登録した商品 \(id) のラベルを表示しています。").font(.callout.bold())
-                Text("印刷して商品に貼ってください。写真は商品の編集画面から撮影・選択できます（公開サイト用は \(id).jpg で originals/ に保存）。")
+                Text("印刷して商品に貼ってください。写真は商品の編集画面から撮影・選択できます（公開サイト用は「画像の保存先」で originals/ を選択）。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

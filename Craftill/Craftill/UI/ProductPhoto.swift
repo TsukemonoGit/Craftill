@@ -25,6 +25,7 @@ struct ProductPhotoSection: View {
     @Binding var removeImage: Bool
 
     @State private var showSourceDialog = false
+    @State private var showDeleteConfirm = false
     @State private var showCamera = false
     @State private var showLibrary = false
     @State private var showFile = false
@@ -34,8 +35,14 @@ struct ProductPhotoSection: View {
 
     private var previewImage: CGImage? {
         if pendingData != nil { return pendingPreview }
-        if removeImage { return nil }
         return storedPreview
+    }
+
+    /// アプリから削除できる写真か（同梱画像は読み取り専用）。
+    private var isRuntimeImage: Bool {
+        if pendingData != nil { return true }
+        if removeImage { return false }
+        return ProductImageStore.hasRuntimeImage(fileName: fileName)
     }
 
     private var cameraAvailable: Bool {
@@ -64,16 +71,26 @@ struct ProductPhotoSection: View {
                             Button("ファイルから選択") { showFile = true }
                             Button("キャンセル", role: .cancel) {}
                         }
-                    if previewImage != nil {
-                        Button("写真を削除") {
-                            pendingData = nil
-                            pendingPreview = nil
-                            removeImage = true
-                        }
-                        .buttonStyle(.app)
-                        .frame(maxWidth: 220)
+                    if isRuntimeImage {
+                        Button("写真を削除") { showDeleteConfirm = true }
+                            .buttonStyle(.app)
+                            .frame(maxWidth: 220)
+                            .confirmationDialog("写真を削除しますか？", isPresented: $showDeleteConfirm,
+                                                titleVisibility: .visible) {
+                                Button("削除", role: .destructive) {
+                                    pendingData = nil
+                                    pendingPreview = nil
+                                    removeImage = true
+                                }
+                                Button("キャンセル", role: .cancel) {}
+                            } message: {
+                                Text("保存先フォルダ（originals/ など）のファイルも削除します。")
+                            }
                     }
-                    FieldHelp("登録した写真はこの端末に保存され、レジの商品タイルに表示されます。公開サイト用の画像は、別途 originals/ に置いて画像ビルドします。")
+                    if previewImage != nil && !isRuntimeImage {
+                        FieldHelp("この写真はアプリに同梱されています。差し替えるには originals/ の原本を変更して画像ビルドしてください。")
+                    }
+                    FieldHelp("登録した写真はレジの商品タイルに表示されます。「画像の保存先」で originals/ を選ぶと、公開サイト用の画像ビルドにもそのまま使えます。")
                 }
             }
         }
@@ -93,11 +110,11 @@ struct ProductPhotoSection: View {
         }
         .photosPicker(isPresented: $showLibrary, selection: $photoItem, matching: .images)
         .task(id: "\(fileName)|\(removeImage)") {
-            if removeImage {
-                storedPreview = nil
-                return
-            }
-            guard let data = ProductImageStore.loadData(fileName: fileName) else {
+            // 削除中でも、同梱画像があればそれを表示する（同梱画像は削除できない）。
+            let url = removeImage
+                ? bundledOnlyImageURL(named: fileName)
+                : bundledImageURL(named: fileName)
+            guard let url, let data = try? Data(contentsOf: url) else {
                 storedPreview = nil
                 return
             }

@@ -153,6 +153,9 @@ struct MenuView: View {
                 Item(id: "price", title: "価格一覧・画像なしID一覧", note: "") {
                     vm.go(.priceList)
                 },
+                Item(id: "imageFolder", title: "画像の保存先", note: "撮影・選択した写真を originals/ などへ") {
+                    vm.go(.imageFolder)
+                },
                 Item(id: "qr", title: "QRラベル生成", note: "商品IDのQR＋ID文字（印刷用）") {
                     vm.go(.qrLabels)
                 }
@@ -780,7 +783,7 @@ struct ProductEditor: View {
     private var formPanel: some View {
         Panel(title: editingId == nil ? "商品を追加" : "商品を編集") {
             FieldHelp("商品はレジで売る単位です。種類を選ぶと、属性と在庫の扱いが切り替わります。")
-            FieldHelp("登録の流れ: ① 商品を登録（写真はこの画面で撮影・選択できます） → ② QRを印刷して貼る → ③ 公開サイト用は originals/ に原本を保存して画像ビルド")
+            FieldHelp("登録の流れ: ① 商品を登録（写真はこの画面で撮影・選択できます） → ② QRを印刷して貼る → ③ 公開サイト用は「画像の保存先」で originals/ を選んで画像ビルド")
             if vm.types.isEmpty {
                 Text("種類が未登録です。先に「② 種類」を作成してください。")
                     .font(.callout)
@@ -825,7 +828,7 @@ struct ProductEditor: View {
             }
             FieldHelp("初期在庫は登録時だけ入力できます。登録後の増減は「手動在庫調整」で行います。公開すると公開サイトの送信対象になります。")
             InfoBox(text: "採番: \(idPreview)", size: 14, tint: .yellow)
-            FieldHelp("写真は上の「商品写真」から撮影・選択できます。公開サイト用の画像は、この商品IDをファイル名にして Macの originals/ に保存し、画像ビルドを行います（例: \(idPreview).jpg）。")
+            FieldHelp("写真は上の「商品写真」から撮影・選択できます。公開サイト用は「画像の保存先」で originals/ を選ぶと、この商品IDのファイル名で同じ写真が保存されます（例: \(idPreview).jpg）。")
             Button("確認へ") { showConfirm = true }
                 .buttonStyle(.appPrimary)
                 .frame(minHeight: 44)
@@ -908,7 +911,7 @@ struct ProductEditor: View {
                 try ProductImageStore.delete(fileName: savedFileName)
             }
         } catch {
-            vm.message = "商品は保存しましたが、写真を保存できませんでした: \(error.localizedDescription)"
+            vm.message = "商品は保存しました。写真: \(error.localizedDescription)"
         }
         if editingId == nil {
             pendingAdded = vm.inventory.first { $0.id == newId }
@@ -1008,8 +1011,8 @@ struct ProductRegisteredSheet: View {
                 } else {
                     stepRow("2", "商品を編集して「商品写真」から撮影・選択する（あとからでも追加できます）")
                 }
-                stepRow("3", "公開サイト用は originals/ に \(product.id).jpg で保存し、画像ビルドする")
-                FieldHelp("アプリで登録した写真はこの端末に保存されます。公開サイト用の画像は originals/ と画像ビルドで別途作成します。")
+                stepRow("3", "公開サイト用は「画像の保存先」で originals/ を選び、画像ビルドする")
+                FieldHelp("アプリで登録した写真は端末内に保存されます。「画像の保存先」で originals/ を選ぶと、同じ写真がビルド用フォルダにも \(product.id).jpg で保存されます。")
             }
             Text("登録した商品IDは変更できません。QRラベルと写真のファイル名は、このIDに合わせてください。")
                 .font(.caption)

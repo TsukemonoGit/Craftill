@@ -4,6 +4,10 @@
 `originals/` の原本（商品IDと同名のファイル）と、アプリが書き出した
 商品マスタ CSV を突合し、次の成果物を再生成する。
 
+アプリの「機能メニュー → 商品マスタ → 画像の保存先」で `originals/` を
+選ぶと、商品編集画面で撮影・選択した写真が `originals/<商品ID>.jpg` に
+保存される。カメラ撮影もファイル選択も同じフォルダを使う。
+
 - レジ用サムネイル: Craftill/Craftill/Images/<商品ID>.jpg
 - Web 用画像:       web/public/images/<商品ID>.jpg
 - 対応一覧:         web/public/images/manifest.csv
