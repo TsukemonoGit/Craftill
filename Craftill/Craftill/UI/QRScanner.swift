@@ -29,11 +29,11 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureMetadataOu
         super.init()
         let c = NotificationCenter.default
         c.addObserver(self, selector: #selector(sessionRuntimeError(_:)),
-                      name: .AVCaptureSessionRuntimeError, object: session)
+                      name: AVCaptureSession.runtimeErrorNotification, object: session)
         c.addObserver(self, selector: #selector(sessionInterrupted(_:)),
-                      name: .AVCaptureSessionWasInterrupted, object: session)
+                      name: AVCaptureSession.wasInterruptedNotification, object: session)
         c.addObserver(self, selector: #selector(sessionInterruptionEnded(_:)),
-                      name: .AVCaptureSessionInterruptionEnded, object: session)
+                      name: AVCaptureSession.interruptionEndedNotification, object: session)
     }
 
     deinit {
