@@ -723,6 +723,29 @@ final class Database {
         }
     }
 
+    // MARK: - 全データ初期化（テスト用）
+
+    /// 会計・在庫・マスタ・送信ログをすべて削除する。
+    /// スキーマ（`user_version`）と PIN は残す。子テーブルから順に消す。
+    func resetAllData() throws {
+        try transaction {
+            try exec("DELETE FROM sale_items;")
+            try exec("DELETE FROM stock_movements;")
+            try exec("DELETE FROM sales;")
+            try exec("DELETE FROM sync_log;")
+            try exec("DELETE FROM products;")
+            try exec("DELETE FROM product_types;")
+            try exec("DELETE FROM product_groups;")
+        }
+    }
+
+    #if DEBUG
+    /// 初期化後にデバッグ用のテスト商品を入れ直す（DEBUG のみ）。
+    func seedTestData() throws {
+        try seedIfNeeded()
+    }
+    #endif
+
     func save(sync: SyncLogEntry) throws {
         try run("""
         INSERT OR REPLACE INTO sync_log (id, at, result, detail)

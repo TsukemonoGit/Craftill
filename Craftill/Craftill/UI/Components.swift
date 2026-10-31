@@ -665,7 +665,7 @@ struct DialogOverlay: View {
 
     private var needsPin: Bool {
         switch dialog {
-        case .suspendSatsConfirmed, .voidSale: return true
+        case .suspendSatsConfirmed, .voidSale, .resetData: return true
         default: return false
         }
     }
@@ -683,6 +683,8 @@ struct DialogOverlay: View {
         case .suspendSatsConfirmed: return "会計の中断（sats確認済み・PIN）"
         case .satsConfirm: return "WoSで入金を確認済みですか?"
         case .voidSale: return "販売取消（PIN）"
+        case .resetData(let reseed):
+            return reseed ? "全データ初期化＋テスト商品再投入（PIN）" : "全データ初期化（PIN）"
         case .message: return "お知らせ"
         }
     }
@@ -705,6 +707,14 @@ struct DialogOverlay: View {
             let jpy = sale.totalJpy.map { Fmt.yen($0) } ?? "―"
             let sats = sale.totalSats.map { Fmt.sats($0) } ?? "―"
             return "販売ID \(id)\n方法 \(sale.method.label)\nsats \(sats) / 現金 \(jpy)"
+        case .resetData(let reseed):
+            var s = "商品 \(vm.inventory.count)件 / 種類 \(vm.types.count)件 / グループ \(vm.groups.count)件\n"
+            s += "販売 \(vm.sales.count)件 / 明細 \(vm.saleItems.count)件 / 在庫変動 \(vm.movements.count)件\n"
+            s += "送信ログ \(vm.syncLog.count)件\n"
+            s += "これらをすべて削除します。元に戻せません。\n"
+            s += "PIN とアプリ設定は残ります。"
+            if reseed { s += "\n\n削除後、デバッグ用のテスト商品を再投入します。" }
+            return s
         case .message(let m): return m
         }
     }
@@ -716,6 +726,7 @@ struct DialogOverlay: View {
         case .suspendSatsConfirmed: return "PIN確認して中断"
         case .satsConfirm: return "確認済み"
         case .voidSale: return "取消実行"
+        case .resetData: return "初期化する"
         case .message: return "OK"
         }
     }

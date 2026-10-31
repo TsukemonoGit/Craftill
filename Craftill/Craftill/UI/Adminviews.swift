@@ -120,6 +120,9 @@ struct MenuView: View {
             Item(id: "price", title: "価格一覧・画像なしID一覧", note: "") { vm.go(.priceList) },
             Item(id: "qr", title: "QRラベル生成", note: "商品IDのQR＋ID文字（印刷用）") { vm.go(.qrLabels) },
             Item(id: "sync", title: "公開サイトへ送信・送信ログ", note: "") { vm.go(.sync) },
+            Item(id: "reset", title: "データ初期化（テスト用）", note: "全削除・PIN必須") {
+                vm.requirePin("データ初期化") { vm.go(.resetData) }
+            },
             Item(id: "export", title: "エクスポート（販売・在庫・精算CSV）", note: "PIN必須") {
                 vm.requirePin("エクスポート") { vm.exportAll() }
             }
@@ -1235,6 +1238,57 @@ struct PriceListView: View {
                     if vm.productsWithoutImage.isEmpty { Text("なし").foregroundColor(.secondary) }
                 }
             }
+        }
+    }
+}
+
+// MARK: - データ初期化（テスト用）
+
+struct ResetDataView: View {
+    @EnvironmentObject var vm: AppViewModel
+
+    var body: some View {
+        AdminShell("データ初期化（テスト用）") {
+            VStack(alignment: .leading, spacing: 16) {
+                InfoBox(text: "登録した商品・販売・在庫・送信ログをすべて削除します", size: 16)
+                Panel(title: "現在のデータ") {
+                    TableRowView(cells: ["グループ", "\(vm.groups.count)件"], widths: [180, 120])
+                    TableRowView(cells: ["種類", "\(vm.types.count)件"], widths: [180, 120])
+                    TableRowView(cells: ["商品", "\(vm.inventory.count)件"], widths: [180, 120])
+                    TableRowView(cells: ["販売", "\(vm.sales.count)件"], widths: [180, 120])
+                    TableRowView(cells: ["販売明細", "\(vm.saleItems.count)件"], widths: [180, 120])
+                    TableRowView(cells: ["在庫変動", "\(vm.movements.count)件"], widths: [180, 120])
+                    TableRowView(cells: ["送信ログ", "\(vm.syncLog.count)件"], widths: [180, 120])
+                }
+                Panel(title: "初期化の内容") {
+                    Text("・商品・種類・グループを削除")
+                    Text("・販売・販売明細・在庫変動を削除")
+                    Text("・送信ログを削除")
+                    Text("・保存中の会計状態（カート）と採番をリセット")
+                    Text("PIN・送信先設定・画像ファイルは残ります。")
+                        .foregroundColor(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    Button("全データを初期化（空にする）") {
+                        vm.dialog = .resetData(reseed: false)
+                    }
+                    .buttonStyle(.appPrimary)
+                    .frame(maxWidth: 360, minHeight: 52)
+
+                    #if DEBUG
+                    Button("初期化してテスト商品を再投入") {
+                        vm.dialog = .resetData(reseed: true)
+                    }
+                    .buttonStyle(.app)
+                    .frame(maxWidth: 360, minHeight: 52)
+                    Text("デバッグビルドのみ。ステッカー・キーホルダー・サービスのテスト商品を入れ直します。")
+                        .font(.caption).foregroundColor(.secondary)
+                    #endif
+                }
+                Text("実行には PIN が必要です。削除は元に戻せません。")
+                    .font(.caption).foregroundColor(.red)
+            }
+            .frame(maxWidth: 680, alignment: .leading)
         }
     }
 }

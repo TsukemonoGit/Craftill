@@ -11,7 +11,7 @@ import UIKit
 
 enum Screen: Hashable {
     case initialLaunch, register, menu, edit, csvImport, report
-    case salesHistory, stockAdjust, priceList, qrLabels, sync
+    case salesHistory, stockAdjust, priceList, qrLabels, sync, resetData
 }
 
 enum Dialog: Identifiable {
@@ -21,6 +21,7 @@ enum Dialog: Identifiable {
     case suspendSatsConfirmed
     case satsConfirm
     case voidSale(String)
+    case resetData(reseed: Bool)
     case message(String)
 
     var id: String {
@@ -31,6 +32,7 @@ enum Dialog: Identifiable {
         case .suspendSatsConfirmed: return "suspendSatsConfirmed"
         case .satsConfirm: return "satsConfirm"
         case .voidSale: return "voidSale"
+        case .resetData(let reseed): return reseed ? "resetDataSeed" : "resetData"
         case .message: return "message"
         }
     }
@@ -465,6 +467,10 @@ final class AppViewModel: ObservableObject {
             guard verifyPin(dialogPin) else { message = "PINが違います"; return }
             performVoidSale(id, pin: dialogPin)
             closeDialog()
+        case .resetData(let reseed):
+            guard verifyPin(dialogPin) else { message = "PINが違います"; return }
+            performResetData(reseed: reseed)
+            closeDialog()
         case .message:
             closeDialog()
         }
@@ -709,6 +715,46 @@ final class AppViewModel: ObservableObject {
         pendingMove = nil
         pendingSatsMove = nil
         clearActiveSale()
+    }
+
+    // MARK: 全データ初期化（テスト用）
+
+    /// 会計・在庫・マスタ・送信ログを削除し、メモリ上の状態も空に戻す。
+    /// 商品・販売を作り直して最初から試したいとき用。PIN は変更しない。
+    private func performResetData(reseed: Bool) {
+        guard let db else {
+            message = "データベースを開けないため、初期化できません"
+            return
+        }
+        do {
+            try db.resetAllData()
+            #if DEBUG
+            if reseed { try db.seedTestData() }
+            #endif
+        } catch {
+            message = "初期化に失敗しました: \(error.localizedDescription)"
+            return
+        }
+
+        // 保存済みの会計・採番も消す。DB を消しただけだと再起動時に
+        // 古いカートや連番が復元されてしまう（A-1、A-3）。
+        clearActiveSale()
+        defaults.removeObject(forKey: Self.adhocSeqKey)
+        pendingMove = nil
+        pendingSatsMove = nil
+        context = SaleContext()
+        cashReceived = 0
+        satsStartedAt = Date()
+        done = nil
+        screen = .menu
+        loadMaster()
+        ids = Self.makeSequencer(sales: sales, movements: movements,
+                                 syncLog: syncLog, cart: [])
+        #if DEBUG
+        message = reseed ? "初期化し、テスト商品を再投入しました" : "全データを初期化しました"
+        #else
+        message = "全データを初期化しました"
+        #endif
     }
 
     /// 会計確定。**DB へ保存できたときだけ**メモリへ反映する（P-02、A-4）。
