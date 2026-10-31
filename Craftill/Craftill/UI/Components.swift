@@ -417,19 +417,24 @@ struct MessageBar: View {
 struct KeypadView: View {
     /// 物理キーボードの数字・Delete を受け付ける（A-5）。現金入力画面だけで有効にする。
     var keyboard = false
+    /// ダイアログ内など、高さを抑えたい場所で使う。
+    var compact = false
     let onKey: (String) -> Void
     private let keys = ["7", "8", "9", "4", "5", "6", "1", "2", "3", "0", "00", "C"]
     @FocusState private var focused: Bool
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: compact ? 6 : 8), count: 3),
+                  spacing: compact ? 6 : 8) {
             ForEach(keys, id: \.self) { k in
                 Button(k) { onKey(k) }
                     .buttonStyle(.app)
-                    .frame(maxWidth: .infinity, minHeight: 52)
+                    // ボタンクリックで入力欄からフォーカスが外れないようにする。
+                    .focusable(false)
+                    .frame(maxWidth: .infinity, minHeight: compact ? 38 : 52)
             }
         }
-        .frame(maxWidth: 360)
+        .frame(maxWidth: compact ? 260 : 360)
         .focusable(keyboard)
         .focused($focused)
         .onAppear { if keyboard { focused = true } }
@@ -445,6 +450,51 @@ struct KeypadView: View {
                 return .handled
             }
             return .ignored
+        }
+    }
+}
+
+/// PIN の入力欄と数字キーパッドをまとめたもの。
+/// キーボード入力（SecureField）とボタン入力の両方を受け付ける。
+struct PinEntryView: View {
+    @Binding var pin: String
+    var maxLength: Int = 12
+    var compact = false
+    var onSubmit: (() -> Void)? = nil
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: compact ? 8 : 12) {
+            SecureField("PIN", text: $pin)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: compact ? 18 : 24, weight: .semibold))
+                .multilineTextAlignment(.center)
+                .focused($focused)
+                .onSubmit { onSubmit?() }
+            KeypadView(compact: compact) { key in
+                apply(key)
+                #if os(macOS)
+                // キーパッドを押したあとも、そのままキーボードで続けられるようにする。
+                focused = true
+                #else
+                // iOS ではソフトキーボードを閉じて、キーパッドを見せる。
+                focused = false
+                #endif
+            }
+        }
+        .onAppear {
+            #if os(macOS)
+            focused = true
+            #endif
+        }
+    }
+
+    private func apply(_ key: String) {
+        if key == "C" {
+            pin = ""
+        } else if pin.count + key.count <= maxLength {
+            pin += key
         }
     }
 }
@@ -755,7 +805,11 @@ struct DialogOverlay: View {
                 Text(title).font(.headline)
                 Text(bodyText)
                 if needsPin {
-                    SecureField("PIN", text: $vm.dialogPin).textFieldStyle(.roundedBorder)
+                    PinEntryView(pin: $vm.dialogPin, maxLength: 12, compact: true) {
+                        guard !vm.dialogPin.isEmpty else { return }
+                        vm.confirmDialog(dialog)
+                    }
+                    .frame(maxWidth: 300)
                 }
                 if compact {
                     VStack(spacing: 8) {
@@ -791,16 +845,12 @@ struct PinOverlay: View {
             Color.black.opacity(0.3).ignoresSafeArea()
             VStack(spacing: 14) {
                 Text(prompt.title).font(.headline)
-                Text(entered.isEmpty ? "PINを入力" : String(repeating: "● ", count: entered.count))
-                    .font(.system(size: 24))
-                    .frame(minHeight: 40)
-                KeypadView { k in
-                    if k == "C" {
-                        entered = ""
-                    } else if entered.count + k.count <= 8 {
-                        entered += k
-                    }
+                PinEntryView(pin: $entered, maxLength: 8) {
+                    guard !entered.isEmpty else { return }
+                    vm.submitPin(entered)
+                    entered = ""
                 }
+                .frame(maxWidth: 360)
                 HStack(spacing: 10) {
                     Button("キャンセル") { vm.pinPrompt = nil }.buttonStyle(.app)
                     Button("確定") {

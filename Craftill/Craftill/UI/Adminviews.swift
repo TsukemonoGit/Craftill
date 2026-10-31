@@ -11,15 +11,8 @@ struct LockView: View {
         VStack(spacing: 18) {
             Spacer()
             Text("レ ジ").font(.system(size: 34, weight: .bold))
-            Text(entered.isEmpty ? "PINを入力" : String(repeating: "● ", count: entered.count))
-                .font(.system(size: 26))
-                .frame(minHeight: 40)
-            KeypadView { k in
-                if k == "C" {
-                    entered = ""
-                } else if entered.count + k.count <= 12 {
-                    entered += k
-                }
+            PinEntryView(pin: $entered, maxLength: 12) {
+                if !entered.isEmpty, vm.unlock(entered) { entered = "" }
             }
             .frame(maxWidth: 320)
             HStack(spacing: 12) {
@@ -48,6 +41,10 @@ struct InitialLaunchView: View {
     @EnvironmentObject var vm: AppViewModel
     @State private var pin1 = ""
     @State private var pin2 = ""
+    @State private var keypadTarget: PinField = .first
+    @FocusState private var focusedPin: PinField?
+
+    private enum PinField { case first, second }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,10 +54,34 @@ struct InitialLaunchView: View {
                     InfoBox(text: "アプリ起動\nPINが未設定です", size: 22)
                     VStack(alignment: .leading, spacing: 6) {
                         Text("PIN").font(.caption).foregroundColor(.secondary)
-                        SecureField("PIN", text: $pin1).textFieldStyle(.roundedBorder)
+                        SecureField("PIN", text: $pin1)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($focusedPin, equals: .first)
+                            .onSubmit { focusedPin = .second }
                         Text("PIN（確認）").font(.caption).foregroundColor(.secondary)
-                        SecureField("PIN（確認）", text: $pin2).textFieldStyle(.roundedBorder)
+                        SecureField("PIN（確認）", text: $pin2)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($focusedPin, equals: .second)
+                            .onSubmit {
+                                if !pin1.isEmpty && !pin2.isEmpty {
+                                    vm.setPin(pin1, confirm: pin2)
+                                }
+                            }
                     }
+                    KeypadView(compact: true) { key in
+                        switch keypadTarget {
+                        case .first: pin1 = updated(pin1, key)
+                        case .second: pin2 = updated(pin2, key)
+                        }
+                        #if os(macOS)
+                        focusedPin = keypadTarget
+                        #else
+                        focusedPin = nil
+                        #endif
+                    }
+                    .frame(maxWidth: 360)
+                    Text("キーボードでも、下の数字ボタンでも入力できます。")
+                        .font(.caption).foregroundColor(.secondary)
                     Button("PINを設定する") { vm.setPin(pin1, confirm: pin2) }
                         .buttonStyle(.appPrimary)
                         .frame(minHeight: 52)
@@ -88,6 +109,20 @@ struct InitialLaunchView: View {
             }
             MessageBar()
         }
+        .onAppear {
+            #if os(macOS)
+            focusedPin = .first
+            #endif
+        }
+        .onChange(of: focusedPin) { _, newValue in
+            if let newValue { keypadTarget = newValue }
+        }
+    }
+
+    private func updated(_ current: String, _ key: String) -> String {
+        if key == "C" { return "" }
+        guard current.count + key.count <= 12 else { return current }
+        return current + key
     }
 }
 
