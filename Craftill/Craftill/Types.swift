@@ -110,16 +110,33 @@ struct Product: Codable, Equatable, Identifiable {
         return "\(id).jpg"
     }
 
-    /// 同梱画像が実在するか（A-1、A-17）。
-    /// `image_ref` が非 nil でもファイルが無ければ「画像なし」として扱う。
+    /// ビルド時に同梱した画像が実在するか（A-1、A-17）。
+    /// 実行時に登録した写真は含めない（公開サイト用の画像はビルド時に作るため）。
     var hasBundledImage: Bool {
+        bundledOnlyImageURL(named: bundledImageName) != nil
+    }
+
+    /// レジ画面に表示できる画像があるか。
+    /// 実行時に登録した写真（端末内）か、ビルド時に同梱した画像のどちらか。
+    var hasDisplayImage: Bool {
         bundledImageURL(named: bundledImageName) != nil
     }
 }
 
-/// 同梱画像の URL。Xcode がリソースを直下に置く場合と、
-/// `Images/` サブディレクトリを保つ場合の両方に対応する（A-17）。
+/// 表示用の画像 URL。実行時に登録した写真を優先し、
+/// 無ければ Xcode に同梱した画像を探す（A-17）。
 func bundledImageURL(named name: String) -> URL? {
+    guard !name.isEmpty else { return nil }
+    let runtime = ProductImageStore.url(fileName: name)
+    if FileManager.default.fileExists(atPath: runtime.path) {
+        return runtime
+    }
+    return bundledOnlyImageURL(named: name)
+}
+
+/// ビルド時に同梱した画像だけを探す。
+/// Xcode がリソースを直下に置く場合と、`Images/` サブディレクトリを保つ場合の両方に対応する。
+func bundledOnlyImageURL(named name: String) -> URL? {
     guard !name.isEmpty else { return nil }
     let bundle = Bundle.main
     return bundle.url(forResource: name, withExtension: nil)

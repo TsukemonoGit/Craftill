@@ -290,6 +290,23 @@ struct LabeledField: View {
     }
 }
 
+/// 入力欄や画面の補足説明。長文でも折り返して表示する。
+struct FieldHelp: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct TableRowView: View {
     let cells: [String]
     let widths: [CGFloat]
@@ -506,7 +523,7 @@ struct ProductTile: View {
         Button { vm.addToCart(product) } label: {
             VStack(alignment: .leading, spacing: 4) {
                 ZStack {
-                    if product.hasBundledImage {
+                    if product.hasDisplayImage {
                         ProductImageView(imageRef: product.bundledImageName)
                     } else {
                         Text("画像なし\n" + (product.attrText(in: vm.types) ?? ""))

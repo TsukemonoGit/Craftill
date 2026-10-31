@@ -51,6 +51,10 @@ struct QRLabelView: View {
     @State private var typeId = ""
 
     private var targets: [Product] {
+        // 商品登録直後は、登録した商品のラベルだけを表示する。
+        if let focus = vm.qrFocusProductId {
+            return vm.inventory.filter { $0.id == focus }
+        }
         guard !scopeAll, !typeId.isEmpty else { return vm.inventory }
         return vm.inventory.filter { $0.typeId == typeId }
     }
@@ -58,7 +62,10 @@ struct QRLabelView: View {
     var body: some View {
         AdminShell("QRラベル") {
             VStack(alignment: .leading, spacing: 12) {
-                if compact {
+                if let focus = vm.qrFocusProductId {
+                    focusBanner(focus)
+                    HStack(spacing: 10) { actionButtons }
+                } else if compact {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("全商品", isOn: $scopeAll)
                             .toggleStyle(.switch)
@@ -70,13 +77,7 @@ struct QRLabelView: View {
                         .disabled(scopeAll)
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 8)],
                                   alignment: .leading, spacing: 8) {
-                            #if canImport(AppKit)
-                            Button("PNGで保存") { savePNG() }.buttonStyle(.app)
-                            Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
-                            #elseif canImport(UIKit)
-                            Button("共有") { sharePNG() }.buttonStyle(.app)
-                            Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
-                            #endif
+                            actionButtons
                         }
                     }
                 } else {
@@ -91,16 +92,10 @@ struct QRLabelView: View {
                         .frame(maxWidth: 240)
                         .disabled(scopeAll)
                         Spacer(minLength: 8)
-                        #if canImport(AppKit)
-                        Button("PNGで保存") { savePNG() }.buttonStyle(.app)
-                        Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
-                        #elseif canImport(UIKit)
-                        Button("共有") { sharePNG() }.buttonStyle(.app)
-                        Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
-                        #endif
+                        actionButtons
                     }
                 }
-                Text("QRの中身＝商品ID。ID文字も併記しています。印刷して各商品に貼ってください。")
+                Text("QRの中身＝商品ID。ID文字も併記しています。印刷して商品に貼ったあと、商品の編集画面から写真を撮影・選択できます。公開サイト用は商品IDをファイル名にして originals/ に保存します（例: ST-004.jpg）。")
                     .font(.caption).foregroundColor(.secondary)
 
                 ScrollView {
@@ -112,6 +107,35 @@ struct QRLabelView: View {
             }
         }
         .onAppear { if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" } }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        #if canImport(AppKit)
+        Button("PNGで保存") { savePNG() }.buttonStyle(.app)
+        Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
+        #elseif canImport(UIKit)
+        Button("共有") { sharePNG() }.buttonStyle(.app)
+        Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
+        #endif
+    }
+
+    /// 登録直後の1商品だけを表示しているときの案内。
+    private func focusBanner(_ id: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("登録した商品 \(id) のラベルを表示しています。").font(.callout.bold())
+                Text("印刷して商品に貼ってください。写真は商品の編集画面から撮影・選択できます（公開サイト用は \(id).jpg で originals/ に保存）。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("全商品を表示") { vm.qrFocusProductId = nil }
+                .buttonStyle(.app)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.1)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.green.opacity(0.4)))
     }
 
     private var renderContent: some View {

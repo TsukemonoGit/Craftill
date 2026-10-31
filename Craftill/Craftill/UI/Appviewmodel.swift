@@ -147,6 +147,9 @@ final class AppViewModel: ObservableObject {
     @Published var lastSyncAt: Date? = nil
     @Published var syncEndpoint = SyncSettings.endpoint
     @Published var syncToken = SyncSettings.token
+    /// QRラベル画面で、直前に登録した商品だけを表示するためのID。
+    /// 商品登録直後の「QRを印刷」導線で使う。他の画面へ移ると解除する。
+    @Published var qrFocusProductId: String? = nil
 
     private var ids = IdSequencer()
     private let db = Database.shared
@@ -336,14 +339,20 @@ final class AppViewModel: ObservableObject {
 
     // MARK: 画面遷移
 
-    func go(_ s: Screen) { screen = s }
+    func go(_ s: Screen) {
+        // 登録直後のQRフォーカスは、QR画面を離れたら解除する。
+        if s != .qrLabels { qrFocusProductId = nil }
+        screen = s
+    }
 
     func openMenu() {
         guard saleState == .idle else { return }
+        qrFocusProductId = nil
         screen = .menu
     }
 
     func exitAdmin() {
+        qrFocusProductId = nil
         screen = pin == nil ? .initialLaunch : .menu
     }
 
