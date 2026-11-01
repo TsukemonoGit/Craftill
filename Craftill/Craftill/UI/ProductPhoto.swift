@@ -295,7 +295,7 @@ struct CameraCaptureSheet: View {
         VStack(spacing: 12) {
             Text("商品写真を撮影").font(.headline)
             ZStack {
-                CameraPreviewView(session: controller.session)
+                PhotoCameraPreviewView(session: controller.session)
                     .background(Color.black)
                 if !controller.status.isEmpty {
                     Text(controller.status)
@@ -350,7 +350,7 @@ private final class CameraPreviewNSView: NSView {
     }
 }
 
-private struct CameraPreviewView: NSViewRepresentable {
+private struct PhotoCameraPreviewView: NSViewRepresentable {
     let session: AVCaptureSession
 
     func makeNSView(context: Context) -> CameraPreviewNSView {
@@ -380,7 +380,7 @@ private final class CameraPreviewUIView: UIView {
     }
 }
 
-private struct CameraPreviewView: UIViewRepresentable {
+private struct PhotoCameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
 
     func makeUIView(context: Context) -> CameraPreviewUIView {
