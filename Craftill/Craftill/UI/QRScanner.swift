@@ -14,13 +14,27 @@ import UIKit
 // macOS / iPadOS の両方でビルドできるようプレビューを分岐。
 // 読み取りは Vision。カメラによって鏡像になる場合に備え、
 // 検出用フレームを左右反転できる（mirrorImage）。
+//
+// カメラ選択:
+// - 自動: システム推奨カメラ、またはシステム既定カメラ。
+// - 手動: ピッカーで列挙された任意のカメラを選択。
+// - macOS では iPhone の Continuity Camera も列挙する。
 // ════════════════════════════════════════════════════════════
 
+/// ピッカー表示用のカメラ情報。
+struct CameraOption: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let kind: String
+}
+
 final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    static let autoID = "auto"
+
     let session = AVCaptureSession()
+
     @Published var lastCode = ""
     @Published var status = "カメラを起動しています…"
-    /// 検出用フレームを左右反転するか。カメラによって鏡像になる場合のみ ON にする。
     @Published var mirrorImage = false {
         didSet {
             flagLock.lock()
@@ -28,36 +42,68 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
             flagLock.unlock()
         }
     }
+    @Published var cameras: [CameraOption] = []
+    @Published var selectedCameraID = QRScannerController.autoID
+
     var onCode: ((String) -> Void)?
 
-    private var configured = false
-    private var lastAccepted = ""
-    private var lastAcceptedAt = Date.distantPast
-    /// 画面がカメラを必要としているか。遅延再開がシート終了後に走るのを防ぐ。
+    /// shouldRun と @Published の値はメインスレッドで管理する。
     private var shouldRun = false
+
+    /// 以下のセッション状態はすべて sessionQueue 上だけでアクセスする。
+    private var configured = false
+    private var currentInput: AVCaptureDeviceInput?
+    private var videoOutput: AVCaptureVideoDataOutput?
+
     private let sessionQueue = DispatchQueue(label: "dev.craftill.camera-session")
     private let videoQueue = DispatchQueue(label: "dev.craftill.camera-video")
 
-    // videoQueue から読むためロックで保護する。
     private let flagLock = NSLock()
     private var mirrorFlag = false
 
+    private var lastAccepted = ""
+    private var lastAcceptedAt = Date.distantPast
+
     override init() {
         super.init()
-        let c = NotificationCenter.default
-        c.addObserver(self, selector: #selector(sessionRuntimeError(_:)),
-                      name: AVCaptureSession.runtimeErrorNotification, object: session)
-        c.addObserver(self, selector: #selector(sessionInterrupted(_:)),
-                      name: AVCaptureSession.wasInterruptedNotification, object: session)
-        c.addObserver(self, selector: #selector(sessionInterruptionEnded(_:)),
-                      name: AVCaptureSession.interruptionEndedNotification, object: session)
+
+        let center = NotificationCenter.default
+        center.addObserver(
+            self,
+            selector: #selector(sessionRuntimeError(_:)),
+            name: AVCaptureSession.runtimeErrorNotification,
+            object: session
+        )
+        center.addObserver(
+            self,
+            selector: #selector(sessionInterrupted(_:)),
+            name: AVCaptureSession.wasInterruptedNotification,
+            object: session
+        )
+        center.addObserver(
+            self,
+            selector: #selector(sessionInterruptionEnded(_:)),
+            name: AVCaptureSession.interruptionEndedNotification,
+            object: session
+        )
+        center.addObserver(
+            self,
+            selector: #selector(devicesChanged(_:)),
+            name: AVCaptureDevice.wasConnectedNotification,
+            object: nil
+        )
+        center.addObserver(
+            self,
+            selector: #selector(devicesChanged(_:)),
+            name: AVCaptureDevice.wasDisconnectedNotification,
+            object: nil
+        )
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
 
-    /// アプリ切替・スリープ・カメラ割り込みから復帰したら、セッションを再開する（A-3）。
     @objc private func sessionRuntimeError(_ note: Notification) {
         restartSoon()
     }
@@ -72,12 +118,23 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
         restartSoon()
     }
 
+    /// 接続・切断時は一覧を更新し、必要なら設定と起動をやり直す。
+    @objc private func devicesChanged(_ note: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refreshCameras()
+
+            guard self.shouldRun else { return }
+            self.configureOrUpdateAndStart()
+        }
+    }
+
     private func restartSoon() {
-        // 通知はメインスレッド以外から来ることもある。`shouldRun` と
-        // `@Published` の更新をメインに揃える。
         DispatchQueue.main.async { [weak self] in
             guard let self, self.shouldRun else { return }
+
             self.stopSessionOnly()
+
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 guard let self, self.shouldRun else { return }
                 self.start()
@@ -87,33 +144,27 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
 
     func start() {
         shouldRun = true
+
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
-            startSession()
+            configureOrUpdateAndStart()
+
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
                     guard let self, self.shouldRun else { return }
+
                     if granted {
-                        self.startSession()
+                        self.configureOrUpdateAndStart()
                     } else {
                         self.status = "カメラへのアクセスが許可されていません（システム設定 > プライバシーとセキュリティ > カメラ）"
                     }
                 }
             }
+
         default:
             status = "カメラへのアクセスが許可されていません（システム設定 > プライバシーとセキュリティ > カメラ）"
         }
-    }
-
-    private func startSession() {
-        guard shouldRun, !session.isRunning else { return }
-        if !configured { configure() }
-        guard configured else { return }
-        sessionQueue.async { [session] in
-            session.startRunning()
-        }
-        status = "QRをカメラに向けてください"
     }
 
     func stop() {
@@ -121,53 +172,231 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
         stopSessionOnly()
     }
 
+    /// stopRunning() も必ず sessionQueue 上で実行する。
     private func stopSessionOnly() {
-        guard session.isRunning else { return }
-        sessionQueue.async { [session] in
-            session.stopRunning()
+        sessionQueue.async { [weak self] in
+            guard let self, self.session.isRunning else { return }
+            self.session.stopRunning()
         }
     }
 
-    private func configure() {
-        session.beginConfiguration()
-        defer { session.commitConfiguration() }
+    // MARK: - カメラ選択
 
-        guard let device = AVCaptureDevice.default(for: .video),
-              let input = try? AVCaptureDeviceInput(device: device),
-              session.canAddInput(input) else {
+    func selectCamera(id: String) {
+        selectedCameraID = id
+        guard shouldRun else { return }
+        configureOrUpdateAndStart()
+    }
+
+    private func discoverDevices() -> [AVCaptureDevice] {
+        var types: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
+
+        if #available(iOS 17.0, macOS 14.0, *) {
+            types.append(.external)
+        }
+
+        #if os(macOS)
+        if #available(macOS 14.0, *) {
+            types.append(.continuityCamera)
+        }
+        #endif
+
+        let discovery = AVCaptureDevice.DiscoverySession(
+            deviceTypes: types,
+            mediaType: .video,
+            position: .unspecified
+        )
+        return discovery.devices
+    }
+
+    private func preferredDevice() -> AVCaptureDevice? {
+        if #available(iOS 17.0, macOS 13.0, *) {
+            if let device = AVCaptureDevice.systemPreferredCamera {
+                return device
+            }
+        }
+        return AVCaptureDevice.default(for: .video)
+    }
+
+    private func resolveDevice() -> AVCaptureDevice? {
+        if selectedCameraID != Self.autoID {
+            if let selected = discoverDevices().first(where: {
+                $0.uniqueID == selectedCameraID
+            }) {
+                return selected
+            }
+
+            selectedCameraID = Self.autoID
+        }
+
+        return preferredDevice()
+    }
+
+    private func kindLabel(_ type: AVCaptureDevice.DeviceType) -> String {
+        type.rawValue.replacingOccurrences(
+            of: "AVCaptureDeviceType",
+            with: ""
+        )
+    }
+
+    /// 一覧更新はメインスレッドで行う。
+    private func refreshCameras() {
+        dispatchPrecondition(condition: .onQueue(.main))
+
+        var seen = Set<String>()
+        cameras = discoverDevices().compactMap { device in
+            guard seen.insert(device.uniqueID).inserted else { return nil }
+
+            return CameraOption(
+                id: device.uniqueID,
+                name: device.localizedName,
+                kind: kindLabel(device.deviceType)
+            )
+        }
+    }
+
+    /// デバイス解決はメインスレッド、セッション操作は sessionQueue で行う。
+    /// 初回設定・カメラ再接続・カメラ切り替えを同じ経路に集約する。
+    private func configureOrUpdateAndStart() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard shouldRun else { return }
+
+        refreshCameras()
+
+        guard let device = resolveDevice() else {
             status = "利用できるカメラが見つかりません"
             return
         }
-        session.addInput(input)
 
-        let output = AVCaptureVideoDataOutput()
-        output.alwaysDiscardsLateVideoFrames = true
-        guard session.canAddOutput(output) else {
-            status = "QR読み取りを開始できません"
-            return
+        let deviceName = device.localizedName
+
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+
+            let configurationSucceeded: Bool = {
+                self.session.beginConfiguration()
+                defer {
+                    self.session.commitConfiguration()
+                }
+
+                if self.configured {
+                    return self.replaceInputOnSessionQueue(with: device)
+                }
+
+                guard self.replaceInputOnSessionQueue(with: device) else {
+                    return false
+                }
+
+                let output = AVCaptureVideoDataOutput()
+                output.alwaysDiscardsLateVideoFrames = true
+
+                guard self.session.canAddOutput(output) else {
+                    self.removeCurrentInputOnSessionQueue()
+                    DispatchQueue.main.async {
+                        self.status = "QR読み取りを開始できません"
+                    }
+                    return false
+                }
+
+                self.session.addOutput(output)
+                output.setSampleBufferDelegate(self, queue: self.videoQueue)
+                self.videoOutput = output
+                self.configured = true
+
+                return true
+            }()
+
+            guard configurationSucceeded else { return }
+
+            // commitConfiguration() 完了後にセッションを開始
+            if !self.session.isRunning {
+                self.session.startRunning()
+            }
+
+            DispatchQueue.main.async {
+                guard self.shouldRun else { return }
+                self.status = "使用中のカメラ: \(deviceName)"
+            }
         }
-        session.addOutput(output)
-        output.setSampleBufferDelegate(self, queue: videoQueue)
-        configured = true
     }
 
-    /// videoQueue 上で呼ばれる。フレームごとに Vision で QR を検出する。
-    func captureOutput(_ output: AVCaptureOutput,
-                       didOutput sampleBuffer: CMSampleBuffer,
-                       from connection: AVCaptureConnection) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+    /// session.beginConfiguration()〜commitConfiguration() の内側で呼び出す。
+    /// 失敗時は以前の入力を復元する。
+    private func replaceInputOnSessionQueue(with device: AVCaptureDevice) -> Bool {
+        dispatchPrecondition(condition: .onQueue(sessionQueue))
+
+        if let currentInput,
+           currentInput.device.uniqueID == device.uniqueID {
+            return true
+        }
+
+        guard let newInput = try? AVCaptureDeviceInput(device: device) else {
+            DispatchQueue.main.async {
+                self.status = "カメラを開けません（\(device.localizedName)）"
+            }
+            return false
+        }
+
+        let previousInput = currentInput
+
+        if let previousInput {
+            session.removeInput(previousInput)
+            currentInput = nil
+        }
+
+        guard session.canAddInput(newInput) else {
+            if let previousInput, session.canAddInput(previousInput) {
+                session.addInput(previousInput)
+                currentInput = previousInput
+            }
+
+            DispatchQueue.main.async {
+                self.status = "このカメラは使用できません（\(device.localizedName)）"
+            }
+            return false
+        }
+
+        session.addInput(newInput)
+        currentInput = newInput
+        return true
+    }
+
+    /// 初回設定に失敗した場合の後始末。設定トランザクション内で呼び出す。
+    private func removeCurrentInputOnSessionQueue() {
+        dispatchPrecondition(condition: .onQueue(sessionQueue))
+
+        if let currentInput {
+            session.removeInput(currentInput)
+            self.currentInput = nil
+        }
+    }
+
+    // MARK: - QR 読み取り
+
+    func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            return
+        }
 
         var image = CIImage(cvPixelBuffer: pixelBuffer)
+
         flagLock.lock()
         let mirror = mirrorFlag
         flagLock.unlock()
+
         if mirror {
             image = image.oriented(.upMirrored)
         }
 
         let request = VNDetectBarcodesRequest()
         request.symbologies = [.qr]
+
         let handler = VNImageRequestHandler(ciImage: image, options: [:])
+
         do {
             try handler.perform([request])
         } catch {
@@ -176,7 +405,9 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
 
         guard let value = request.results?
             .compactMap({ $0.payloadStringValue })
-            .first(where: { !$0.isEmpty }) else { return }
+            .first(where: { !$0.isEmpty }) else {
+            return
+        }
 
         DispatchQueue.main.async { [weak self] in
             self?.accept(value)
@@ -184,9 +415,14 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
     }
 
     private func accept(_ value: String) {
-        // 同じQRを連続で読んだときに二重追加しない（1.2秒あければ再追加できる。A-2）
         let now = Date()
-        if value == lastAccepted && now.timeIntervalSince(lastAcceptedAt) < 1.2 { return }
+
+        // 同じQRの連続読み取りによる二重追加を防ぐ。
+        if value == lastAccepted,
+           now.timeIntervalSince(lastAcceptedAt) < 1.2 {
+            return
+        }
+
         lastAccepted = value
         lastAcceptedAt = now
         lastCode = value
@@ -272,6 +508,25 @@ struct QRScannerSheet: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.white.opacity(0.5), lineWidth: 1)
                 )
+
+            // 検出台数に関わらず常に表示する。
+            HStack(spacing: 8) {
+                Text("カメラ（検出: \(scanner.cameras.count)台）")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                Picker("カメラ", selection: Binding(
+                    get: { scanner.selectedCameraID },
+                    set: { scanner.selectCamera(id: $0) }
+                )) {
+                    Text("自動").tag(QRScannerController.autoID)
+                    ForEach(scanner.cameras) { camera in
+                        Text("\(camera.name)（\(camera.kind)）").tag(camera.id)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                Spacer()
+            }
 
             HStack(spacing: 12) {
                 Text(scanner.status).font(.callout).foregroundColor(.secondary)
