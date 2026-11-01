@@ -10,9 +10,22 @@
 		000000000000000000000120 /* Craftill.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Craftill.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		FE9B96833097018E00215909 /* Exceptions for "Craftill" folder in "Craftill" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 000000000000000100000000 /* Craftill */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		000000000000000000000010 /* Craftill */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FE9B96833097018E00215909 /* Exceptions for "Craftill" folder in "Craftill" target */,
+			);
 			path = Craftill;
 			sourceTree = "<group>";
 		};
@@ -268,6 +281,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Craftill/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "商品のQRコード読み取りと商品写真の撮影にカメラを使用します。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -318,6 +332,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Craftill/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "商品のQRコード読み取りと商品写真の撮影にカメラを使用します。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
