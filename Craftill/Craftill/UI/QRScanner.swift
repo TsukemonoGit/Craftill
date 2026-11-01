@@ -239,27 +239,39 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
         }
     }
 
-    /// 選択を評価して入力を差し替える。メインスレッドで呼ぶ。
+       /// 選択を評価して入力を差し替える。メインスレッドで呼ぶ。
     private func applySelection() {
         refreshCameras()
         guard let device = resolveDevice() else {
             status = "利用できるカメラが見つかりません"
             return
         }
-        let changed = currentInput?.device.uniqueID != device.uniqueID
-        if setInput(device), changed {
-            status = "使用中のカメラ: \(device.localizedName)"
+        
+        let deviceName = device.localizedName
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            let changed = self.currentInput?.device.uniqueID != device.uniqueID
+            if self.setInputOnSessionQueue(device), changed {
+                DispatchQueue.main.async {
+                    self.status = "使用中のカメラ: \(deviceName)"
+                }
+            }
         }
     }
 
-    /// セッションの入力を差し替える。失敗時は元の入力に戻す。
+       /// セッションの入力を差し替える。失敗時は元の入力に戻す。
+    /// 必ず sessionQueue 上で呼び出すこと。
     @discardableResult
-    private func setInput(_ device: AVCaptureDevice) -> Bool {
+    private func setInputOnSessionQueue(_ device: AVCaptureDevice) -> Bool {
+        // 既に同じデバイスが設定されている場合は何もしない
         if let current = currentInput, current.device.uniqueID == device.uniqueID {
             return true
         }
+        
         guard let newInput = try? AVCaptureDeviceInput(device: device) else {
-            status = "カメラを開けません（\(device.localizedName)）"
+            DispatchQueue.main.async {
+                self.status = "カメラを開けません（\(device.localizedName)）"
+            }
             return false
         }
 
@@ -271,41 +283,58 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
             session.removeInput(previous)
             currentInput = nil
         }
+        
         if session.canAddInput(newInput) {
             session.addInput(newInput)
             currentInput = newInput
             return true
         }
+        
         // 追加できなかった場合は元の入力に戻す。
         if let previous, session.canAddInput(previous) {
             session.addInput(previous)
             currentInput = previous
         }
-        status = "このカメラは使用できません（\(device.localizedName)）"
+        
+        DispatchQueue.main.async {
+            self.status = "このカメラは使用できません（\(device.localizedName)）"
+        }
         return false
     }
 
-    private func configure() {
+        private func configure() {
         refreshCameras()
         guard let device = resolveDevice() else {
             status = "利用できるカメラが見つかりません"
             return
         }
-        // 失敗時の理由は setInput がステータスに設定済み。上書きしない。
-        guard setInput(device) else { return }
-
-        session.beginConfiguration()
-        defer { session.commitConfiguration() }
-
-        let output = AVCaptureVideoDataOutput()
-        output.alwaysDiscardsLateVideoFrames = true
-        guard session.canAddOutput(output) else {
-            status = "QR読み取りを開始できません"
-            return
+        
+        // セッションキュー上で入力設定と出力設定をアトミックに行う
+        sessionQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            self.session.beginConfiguration()
+            defer { self.session.commitConfiguration() }
+            
+            // 入力の設定
+            guard self.setInputOnSessionQueue(device) else { return }
+            
+            // 出力の設定
+            let output = AVCaptureVideoDataOutput()
+            output.alwaysDiscardsLateVideoFrames = true
+            guard self.session.canAddOutput(output) else {
+                DispatchQueue.main.async {
+                    self.status = "QR読み取りを開始できません"
+                }
+                return
+            }
+            self.session.addOutput(output)
+            output.setSampleBufferDelegate(self, queue: self.videoQueue)
+            
+            DispatchQueue.main.async {
+                self.configured = true
+            }
         }
-        session.addOutput(output)
-        output.setSampleBufferDelegate(self, queue: videoQueue)
-        configured = true
     }
 
     /// videoQueue 上で呼ばれる。フレームごとに Vision で QR を検出する。
@@ -373,24 +402,31 @@ struct CameraPreview: NSViewRepresentable {
     }
 }
 #elseif canImport(UIKit)
+// 1. layerClass をオーバーライドした専用UIViewを定義する
+class CameraPreviewView: UIView {
+    override class var layerClass: AnyClass {
+        AVCaptureVideoPreviewLayer.self
+    }
+    
+    var videoPreviewLayer: AVCaptureVideoPreviewLayer {
+        return layer as! AVCaptureVideoPreviewLayer
+    }
+}
+
+// 2. UIViewRepresentable では上記のカスタムViewを使用する
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .black
-        let preview = AVCaptureVideoPreviewLayer(session: session)
-        preview.videoGravity = .resizeAspectFill
-        preview.frame = view.bounds
-        view.layer.addSublayer(preview)
+    func makeUIView(context: Context) -> CameraPreviewView {
+        let view = CameraPreviewView()
+        view.videoPreviewLayer.session = session
+        view.videoPreviewLayer.videoGravity = .resizeAspectFill
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        if let preview = uiView.layer.sublayers?
-            .compactMap({ $0 as? AVCaptureVideoPreviewLayer }).first {
-            preview.frame = uiView.bounds
-        }
+    func updateUIView(_ uiView: CameraPreviewView, context: Context) {
+        // セッションが更新された場合に備えて再割り当てする
+        uiView.videoPreviewLayer.session = session
     }
 }
 #endif
