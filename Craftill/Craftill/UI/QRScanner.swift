@@ -216,24 +216,31 @@ struct CameraPreview: NSViewRepresentable {
     }
 }
 #elseif canImport(UIKit)
+// 1. layerClass をオーバーライドした専用UIViewを定義する
+class CameraPreviewView: UIView {
+    override class var layerClass: AnyClass {
+        AVCaptureVideoPreviewLayer.self
+    }
+    
+    var videoPreviewLayer: AVCaptureVideoPreviewLayer {
+        return layer as! AVCaptureVideoPreviewLayer
+    }
+}
+
+// 2. UIViewRepresentable では上記のカスタムViewを使用する
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .black
-        let preview = AVCaptureVideoPreviewLayer(session: session)
-        preview.videoGravity = .resizeAspectFill
-        preview.frame = view.bounds
-        view.layer.addSublayer(preview)
+    func makeUIView(context: Context) -> CameraPreviewView {
+        let view = CameraPreviewView()
+        view.videoPreviewLayer.session = session
+        view.videoPreviewLayer.videoGravity = .resizeAspectFill
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        if let preview = uiView.layer.sublayers?
-            .compactMap({ $0 as? AVCaptureVideoPreviewLayer }).first {
-            preview.frame = uiView.bounds
-        }
+    func updateUIView(_ uiView: CameraPreviewView, context: Context) {
+        // セッションが更新された場合に備えて再割り当てする
+        uiView.videoPreviewLayer.session = session
     }
 }
 #endif
