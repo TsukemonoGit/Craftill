@@ -42,7 +42,7 @@ struct RootView: View {
         case .priceList: PriceListView()
         case .qrLabels: QRLabelView()
         case .sync: SyncView()
-        case .resetData: ResetDataView()
+        case .dataManagement: DataManagementView()
         case .imageFolder: ImageFolderView()
         }
     }

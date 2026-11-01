@@ -11,7 +11,7 @@ import UIKit
 
 enum Screen: Hashable {
     case initialLaunch, register, menu, edit, csvImport, report
-    case salesHistory, stockAdjust, priceList, qrLabels, sync, resetData, imageFolder
+    case salesHistory, stockAdjust, priceList, qrLabels, sync, dataManagement, imageFolder
 }
 
 enum Dialog: Identifiable {
@@ -22,6 +22,9 @@ enum Dialog: Identifiable {
     case satsConfirm
     case voidSale(String)
     case resetData(reseed: Bool)
+    case resetAccounting(restoreStock: Bool)
+    case resetStock
+    case clearSyncLog
     case message(String)
 
     var id: String {
@@ -33,6 +36,10 @@ enum Dialog: Identifiable {
         case .satsConfirm: return "satsConfirm"
         case .voidSale: return "voidSale"
         case .resetData(let reseed): return reseed ? "resetDataSeed" : "resetData"
+        case .resetAccounting(let restoreStock):
+            return restoreStock ? "resetAccountingStock" : "resetAccounting"
+        case .resetStock: return "resetStock"
+        case .clearSyncLog: return "clearSyncLog"
         case .message: return "message"
         }
     }
@@ -480,6 +487,18 @@ final class AppViewModel: ObservableObject {
             guard verifyPin(dialogPin) else { message = "PINが違います"; return }
             performResetData(reseed: reseed)
             closeDialog()
+        case .resetAccounting(let restoreStock):
+            guard verifyPin(dialogPin) else { message = "PINが違います"; return }
+            performResetAccounting(restoreStock: restoreStock)
+            closeDialog()
+        case .resetStock:
+            guard verifyPin(dialogPin) else { message = "PINが違います"; return }
+            performResetStockToInitial()
+            closeDialog()
+        case .clearSyncLog:
+            guard verifyPin(dialogPin) else { message = "PINが違います"; return }
+            performClearSyncLog()
+            closeDialog()
         case .message:
             closeDialog()
         }
@@ -729,7 +748,7 @@ final class AppViewModel: ObservableObject {
         clearActiveSale()
     }
 
-    // MARK: 全データ初期化（テスト用）
+    // MARK: 初期化・リセット
 
     /// 会計・在庫・マスタ・送信ログを削除し、メモリ上の状態も空に戻す。
     /// 商品・販売を作り直して最初から試したいとき用。PIN は変更しない。
@@ -767,6 +786,204 @@ final class AppViewModel: ObservableObject {
         #else
         message = "全データを初期化しました"
         #endif
+    }
+
+    /// 会計（販売・明細・販売に伴う在庫変動）を削除する。
+    /// `restoreStock` が true なら、在庫も初期登録時の数量へ戻す。
+    /// 商品マスタ・手動調整・送信ログは残す。
+    private func performResetAccounting(restoreStock: Bool) {
+        guard saleState == .idle else {
+            message = "会計中は実行できません。待機中（カートが空）にしてください"
+            return
+        }
+        guard let db else {
+            message = "データベースを開けないため、会計を初期化できません"
+            return
+        }
+        do {
+            try db.resetSalesKeepingMaster()
+            inventory = try db.loadProducts()
+            movements = try db.loadMovements()
+        } catch {
+            message = "会計の初期化に失敗しました: \(error.localizedDescription)"
+            return
+        }
+
+        sales = []
+        saleItems = []
+        clearActiveSale()
+        defaults.removeObject(forKey: Self.adhocSeqKey)
+        pendingMove = nil
+        pendingSatsMove = nil
+        context = SaleContext()
+        cashReceived = 0
+        satsStartedAt = Date()
+        done = nil
+
+        var parts = ["会計を初期化しました（販売・明細・販売に伴う在庫変動を削除）"]
+        if restoreStock {
+            let result = applyInitialStockReset()
+            if let note = result.note {
+                parts.append(note)
+            } else if result.changed > 0 {
+                parts.append("在庫 \(result.changed)件を初期データへ戻しました")
+            } else {
+                parts.append("在庫を初期データへ戻しました（変更なし）")
+            }
+        } else {
+            parts.append("在庫は販売前に戻しました（手動調整は残ります）")
+        }
+        ids = Self.makeSequencer(sales: sales, movements: movements,
+                                 syncLog: syncLog, cart: [])
+        message = parts.joined(separator: "\n")
+    }
+
+    /// 在庫だけを初期登録時の数量へ戻す。販売履歴は残す。
+    private func performResetStockToInitial() {
+        guard saleState == .idle else {
+            message = "会計中は実行できません。待機中（カートが空）にしてください"
+            return
+        }
+        let result = applyInitialStockReset()
+        if let note = result.note {
+            message = note
+        } else if result.changed == 0 {
+            message = "在庫はすでに初期データです"
+        } else {
+            message = "在庫 \(result.changed)件を初期データへ戻しました"
+        }
+    }
+
+    /// 商品ごとの初期在庫（`reason = initial` の合計）へ現在庫を戻す。
+    /// 在庫ログとの整合を保つため、差分は `adjust` として記録する。
+    private func applyInitialStockReset() -> (changed: Int, note: String?) {
+        guard let db else { return (0, "データベースを開けないため、在庫を戻せません") }
+        let initial: [String: Int]
+        do {
+            initial = try db.loadInitialStockTotals()
+        } catch {
+            return (0, "初期在庫を読み込めませんでした: \(error.localizedDescription)")
+        }
+        guard !initial.isEmpty else {
+            return (0, "初期在庫の記録がありません。テスト商品を再投入してください")
+        }
+
+        var inv = inventory
+        var mov = movements
+        var seq = ids
+        var added: [StockMovement] = []
+        let now = Date()
+        for i in inv.indices {
+            guard inv[i].stock != nil, let target = initial[inv[i].id] else { continue }
+            let current = inv[i].stock ?? 0
+            let diff = target - current
+            guard diff != 0 else { continue }
+            inv[i].stock = target
+            let movement = StockMovement(id: seq.nextMovementID(),
+                                         productId: inv[i].id, delta: diff,
+                                         reason: .adjust, saleId: nil, at: now)
+            mov.append(movement)
+            added.append(movement)
+        }
+        guard !added.isEmpty else { return (0, nil) }
+
+        do {
+            try db.persistAdjust(inventory: inv, movements: added)
+        } catch {
+            return (0, "在庫を戻せませんでした: \(error.localizedDescription)")
+        }
+        inventory = inv
+        movements = mov
+        ids = seq
+        return (added.count, nil)
+    }
+
+    private func performClearSyncLog() {
+        guard let db else {
+            message = "データベースを開けないため、送信ログを削除できません"
+            return
+        }
+        let count = syncLog.count
+        do {
+            try db.clearSyncLog()
+        } catch {
+            message = "送信ログを削除できませんでした: \(error.localizedDescription)"
+            return
+        }
+        syncLog = []
+        lastSyncAt = nil
+        message = "送信ログを \(count)件削除しました"
+    }
+
+    /// レポート・集計の画面確認用に、在庫のある商品からテスト会計を作る。
+    /// 通常の会計と同じ `commitSale` を通すので、売上・在庫・在庫変動に反映される。
+    func addTestSales(count: Int = 1) {
+        guard saleState == .idle else {
+            message = "会計中はテスト会計を追加できません"
+            return
+        }
+        guard let db else {
+            message = "データベースを開けないため、テスト会計を追加できません"
+            return
+        }
+
+        var inv = inventory
+        var mov = movements
+        var allSales = sales
+        var allItems = saleItems
+        var seq = ids
+        var added = 0
+        var failure: String? = nil
+
+        for _ in 0..<max(1, min(count, 20)) {
+            let candidates = inv.filter {
+                $0.managesStock(in: types) && ($0.stock ?? 0) > 0
+            }
+            guard !candidates.isEmpty else { break }
+            let product = candidates[min(added, candidates.count - 1)]
+            let cart = [CartLine(product: product, qty: 1, in: types)]
+            let beforeMovements = mov.count
+            let result = commitSale(cart: cart,
+                                    inventory: &inv,
+                                    movements: &mov,
+                                    sales: &allSales,
+                                    items: &allItems,
+                                    ids: &seq,
+                                    types: types,
+                                    chooseSats: false,
+                                    receivedJpy: product.priceJpy,
+                                    confirmedAt: nil,
+                                    now: Date())
+            switch result {
+            case .failure(let problems):
+                failure = problems.joined(separator: " / ")
+            case .success(let sale, let items, _):
+                do {
+                    try db.persistCommit(sale: sale, items: items,
+                                         inventory: inv,
+                                         movements: Array(mov[beforeMovements...]))
+                } catch {
+                    message = "テスト会計を保存できませんでした: \(error.localizedDescription)"
+                    return
+                }
+                added += 1
+            }
+            if failure != nil { break }
+        }
+
+        inventory = inv
+        movements = mov
+        sales = allSales
+        saleItems = allItems
+        ids = seq
+
+        if let failure, added == 0 {
+            message = "テスト会計を作れませんでした: \(failure)"
+        } else if added == 0 {
+            message = "在庫のある商品がないため、テスト会計を追加できませんでした"
+        } else {
+            message = "テスト会計を \(added)件追加しました（売上・在庫に反映済み）"
+        }
     }
 
     /// 会計確定。**DB へ保存できたときだけ**メモリへ反映する（P-02、A-4）。

@@ -732,7 +732,8 @@ struct DialogOverlay: View {
 
     private var needsPin: Bool {
         switch dialog {
-        case .suspendSatsConfirmed, .voidSale, .resetData: return true
+        case .suspendSatsConfirmed, .voidSale, .resetData,
+             .resetAccounting, .resetStock, .clearSyncLog: return true
         default: return false
         }
     }
@@ -752,6 +753,10 @@ struct DialogOverlay: View {
         case .voidSale: return "販売取消（PIN）"
         case .resetData(let reseed):
             return reseed ? "全データ初期化＋テスト商品再投入（PIN）" : "全データ初期化（PIN）"
+        case .resetAccounting(let restoreStock):
+            return restoreStock ? "会計を初期化＋在庫を初期データへ（PIN）" : "会計を初期化（PIN）"
+        case .resetStock: return "在庫を初期データへ戻す（PIN）"
+        case .clearSyncLog: return "送信ログを削除（PIN）"
         case .message: return "お知らせ"
         }
     }
@@ -782,6 +787,23 @@ struct DialogOverlay: View {
             s += "PIN とアプリ設定は残ります。"
             if reseed { s += "\n\n削除後、デバッグ用のテスト商品を再投入します。" }
             return s
+        case .resetAccounting(let restoreStock):
+            var s = "販売 \(vm.sales.count)件 / 明細 \(vm.saleItems.count)件\n"
+            s += "販売に伴う在庫変動を削除し、商品の在庫を販売前に戻します。\n"
+            s += "商品マスタ・手動の在庫調整・送信ログは残ります。\n"
+            if restoreStock {
+                s += "さらに、在庫を初期登録時の数量へ戻します。"
+            }
+            s += "\n元に戻せません。"
+            return s
+        case .resetStock:
+            var s = "商品 \(vm.inventory.count)件の在庫を、初期登録時の数量へ戻します。\n"
+            s += "販売履歴・売上・送信ログは残ります。\n"
+            s += "在庫ログとの差は「手動調整」として記録します。\n"
+            s += "元に戻せません。"
+            return s
+        case .clearSyncLog:
+            return "送信ログ \(vm.syncLog.count)件を削除します。\n会計・在庫・商品マスタには影響しません。"
         case .message(let m): return m
         }
     }
@@ -794,6 +816,9 @@ struct DialogOverlay: View {
         case .satsConfirm: return "確認済み"
         case .voidSale: return "取消実行"
         case .resetData: return "初期化する"
+        case .resetAccounting: return "初期化する"
+        case .resetStock: return "在庫を戻す"
+        case .clearSyncLog: return "削除する"
         case .message: return "OK"
         }
     }

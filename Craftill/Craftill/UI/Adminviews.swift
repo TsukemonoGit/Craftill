@@ -196,15 +196,19 @@ struct MenuView: View {
                 }
             ]),
             Section(id: "maintenance", title: "連携・バックアップ・保守",
-                    note: "公開サイトへの送信、CSV出力、テスト用の初期化", items: [
+                    note: "公開サイトへの送信、CSV出力", items: [
                 Item(id: "sync", title: "公開サイトへ送信・送信ログ", note: "") {
                     vm.go(.sync)
                 },
                 Item(id: "export", title: "エクスポート（販売・在庫・精算CSV）", note: "PIN必須") {
                     vm.requirePin("エクスポート") { vm.exportAll() }
-                },
-                Item(id: "reset", title: "データ初期化（テスト用）", note: "全削除・実行時にPIN必須") {
-                    vm.go(.resetData)
+                }
+            ]),
+            Section(id: "data", title: "データ管理",
+                    note: "会計・在庫・全データの初期化とリセット。テストに限らず、運用前の初期化にも使えます", items: [
+                Item(id: "dataManagement", title: "データ管理（初期化・リセット）",
+                     note: "会計初期化・在庫リセット・全データ初期化・送信ログ削除") {
+                    vm.go(.dataManagement)
                 }
             ])
         ]
@@ -2052,15 +2056,27 @@ struct PriceListView: View {
     }
 }
 
-// MARK: - データ初期化（テスト用）
+// MARK: - データ管理（初期化・リセット）
 
-struct ResetDataView: View {
+struct DataManagementView: View {
     @EnvironmentObject var vm: AppViewModel
 
+    private var stockTotal: Int {
+        vm.inventory.compactMap { $0.stock }.reduce(0, +)
+    }
+
+    private var outOfStockCount: Int {
+        vm.inventory.filter {
+            $0.managesStock(in: vm.types) && ($0.stock ?? 0) == 0
+        }.count
+    }
+
     var body: some View {
-        AdminShell("データ初期化（テスト用）") {
+        AdminShell("データ管理（初期化・リセット）") {
             VStack(alignment: .leading, spacing: 16) {
-                InfoBox(text: "登録した商品・販売・在庫・送信ログをすべて削除します", size: 16)
+                InfoBox(text: "会計・在庫・商品マスタ・送信ログを初期化します。実行時にPINを1回入力します。",
+                        size: 14, bold: false)
+
                 Panel(title: "現在のデータ") {
                     TableRowView(cells: ["グループ", "\(vm.groups.count)件"], widths: [180, 120])
                     TableRowView(cells: ["種類", "\(vm.types.count)件"], widths: [180, 120])
@@ -2069,33 +2085,79 @@ struct ResetDataView: View {
                     TableRowView(cells: ["販売明細", "\(vm.saleItems.count)件"], widths: [180, 120])
                     TableRowView(cells: ["在庫変動", "\(vm.movements.count)件"], widths: [180, 120])
                     TableRowView(cells: ["送信ログ", "\(vm.syncLog.count)件"], widths: [180, 120])
+                    Text("在庫合計 \(stockTotal) / 在庫切れ \(outOfStockCount)件")
+                        .font(.caption).foregroundColor(.secondary)
                 }
-                Panel(title: "初期化の内容") {
-                    Text("・商品・種類・グループを削除")
-                    Text("・販売・販売明細・在庫変動を削除")
-                    Text("・送信ログを削除")
-                    Text("・保存中の会計状態（カート）と採番をリセット")
-                    Text("PIN・送信先設定・画像ファイルは残ります。")
-                        .foregroundColor(.secondary)
+
+                Panel(title: "会計の初期化") {
+                    Text("販売履歴を消して、同じ商品で何度でもレジを試せます。")
+                    Button("会計を初期化＋在庫を初期データへ") {
+                        vm.dialog = .resetAccounting(restoreStock: true)
+                    }
+                    .buttonStyle(.appPrimary)
+                    .frame(maxWidth: 420, minHeight: 52)
+                    Text("販売・明細・販売に伴う在庫変動を削除し、在庫を初期登録時の数量に戻します。商品マスタと送信ログは残ります。")
+                        .font(.caption).foregroundColor(.secondary)
+
+                    Button("会計だけ初期化（在庫は販売前に戻す）") {
+                        vm.dialog = .resetAccounting(restoreStock: false)
+                    }
+                    .buttonStyle(.app)
+                    .frame(maxWidth: 420, minHeight: 52)
+                    Text("手動で行った在庫調整は残したまま、販売の分だけ戻します。")
+                        .font(.caption).foregroundColor(.secondary)
                 }
-                VStack(alignment: .leading, spacing: 10) {
+
+                Panel(title: "在庫の初期化") {
+                    Text("販売履歴は残したまま、在庫だけを初期データに戻します。")
+                    Button("在庫を初期データへ戻す") { vm.dialog = .resetStock }
+                        .buttonStyle(.app)
+                        .frame(maxWidth: 420, minHeight: 52)
+                    Text("初期在庫は、商品登録時・CSV取り込み時の数量です。差分は「手動調整」として在庫ログに残ります。")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+
+                Panel(title: "送信ログ") {
+                    Button("送信ログを削除") { vm.dialog = .clearSyncLog }
+                        .buttonStyle(.app)
+                        .frame(maxWidth: 420, minHeight: 52)
+                    Text("会計・在庫・商品マスタには影響しません。")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+
+                Panel(title: "動作確認用のテスト会計") {
+                    Text("在庫のある商品から、現金のテスト会計を追加します。")
+                    HStack(spacing: 10) {
+                        Button("1件追加") { vm.addTestSales(count: 1) }
+                            .buttonStyle(.app)
+                        Button("5件追加") { vm.addTestSales(count: 5) }
+                            .buttonStyle(.app)
+                    }
+                    .frame(maxWidth: 420)
+                    Text("通常の会計と同じ処理なので、売上・在庫・在庫変動・集計に反映されます。")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+
+                Panel(title: "全データ初期化") {
+                    Text("商品・種類・グループ・販売・明細・在庫変動・送信ログをすべて削除します。PIN・送信先設定・画像ファイルは残ります。")
                     Button("全データを初期化（空にする）") {
                         vm.dialog = .resetData(reseed: false)
                     }
                     .buttonStyle(.appPrimary)
-                    .frame(maxWidth: 360, minHeight: 52)
+                    .frame(maxWidth: 420, minHeight: 52)
 
                     #if DEBUG
                     Button("初期化してテスト商品を再投入") {
                         vm.dialog = .resetData(reseed: true)
                     }
                     .buttonStyle(.app)
-                    .frame(maxWidth: 360, minHeight: 52)
+                    .frame(maxWidth: 420, minHeight: 52)
                     Text("デバッグビルドのみ。ステッカー・キーホルダー・サービスのテスト商品を入れ直します。")
                         .font(.caption).foregroundColor(.secondary)
                     #endif
                 }
-                Text("この画面の表示に PIN は不要です。実行ボタンを押したあと、確認のため PIN を1回入力します。削除は元に戻せません。")
+
+                Text("実行ボタンを押したあと、確認のためPINを1回入力します。削除は元に戻せません。")
                     .font(.caption).foregroundColor(.red)
             }
             .frame(maxWidth: 680, alignment: .leading)

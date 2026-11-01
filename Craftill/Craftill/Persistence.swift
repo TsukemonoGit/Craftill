@@ -723,7 +723,49 @@ final class Database {
         }
     }
 
-    // MARK: - 全データ初期化（テスト用）
+    // MARK: - 初期化・リセット
+
+    /// 会計（販売・明細・販売に伴う在庫変動）だけを削除する。商品マスタと送信ログは残す。
+    /// 削除後、商品の在庫を「販売以外の変動（初期登録・手動調整）の合計」に戻す。
+    func resetSalesKeepingMaster() throws {
+        try transaction {
+            try exec("DELETE FROM sale_items;")
+            try exec("DELETE FROM stock_movements WHERE sale_id IS NOT NULL;")
+            try exec("DELETE FROM sales;")
+            // 販売の在庫変動を消したので、残っている初期登録・手動調整から現在庫を作り直す。
+            // 変動が1件も無い商品（在庫0で登録された商品など）は、現在庫をそのまま残す。
+            try exec("""
+            UPDATE products SET stock = (
+                SELECT SUM(delta) FROM stock_movements m
+                WHERE m.product_id = products.product_id
+            )
+            WHERE stock IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM stock_movements m
+                WHERE m.product_id = products.product_id
+              );
+            """)
+        }
+    }
+
+    /// 商品ごとの「初期登録時の在庫数」（`reason = initial` の合計）。
+    func loadInitialStockTotals() throws -> [String: Int] {
+        try query("""
+        SELECT product_id, SUM(delta) FROM stock_movements
+        WHERE reason = 'initial'
+        GROUP BY product_id;
+        """) { s in
+            (text(s, 0) ?? "", Int(sqlite3_column_int64(s, 1)))
+        }
+        .reduce(into: [String: Int]()) { $0[$1.0] = $1.1 }
+    }
+
+    /// 送信ログだけを削除する。会計・在庫には影響しない。
+    func clearSyncLog() throws {
+        try run("DELETE FROM sync_log;")
+    }
+
+    // MARK: - 全データ初期化
 
     /// 会計・在庫・マスタ・送信ログをすべて削除する。
     /// スキーマ（`user_version`）と PIN は残す。子テーブルから順に消す。
