@@ -2,11 +2,23 @@ import SwiftUI
 
 // MARK: - レジ画面（待機中・スキャン中）
 
+/// 商品リストの各見出しがスクロール領域の上端からどれだけ離れているか。
+/// いちばん上にある種類をタブの選択状態に反映する（スクロールスパイ）。
+private struct ProductSectionOffsetKey: PreferenceKey {
+    static var defaultValue: [String: CGFloat] { [:] }
+
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
 struct RegisterView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
     @State private var manualID = ""
     @State private var showScanner = false
+    /// タブを押したときだけ商品リストをスクロールする。スクロール中の検知とは分ける。
+    @State private var scrollRequest: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,23 +46,8 @@ struct RegisterView: View {
 
     private var productPanel: some View {
         VStack(spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(vm.types) { t in
-                        Button(vm.tabLabel(t)) { vm.selectedTypeId = t.typeId }
-                            .buttonStyle(AppButtonStyle(primary: t.typeId == vm.selectedTypeId))
-                            .frame(minWidth: 120, maxWidth: 240)
-                    }
-                }
-            }
-            .frame(minHeight: 40, maxHeight: 56)
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 240), spacing: 8)], spacing: 8) {
-                    ForEach(vm.products(ofType: vm.selectedTypeId)) { p in
-                        ProductTile(product: p)
-                    }
-                }
-            }
+            typeTabBar
+            productList
             if compact {
                 VStack(spacing: 8) {
                     TextField("商品ID手動入力（例: mk8）", text: $manualID)
@@ -90,6 +87,114 @@ struct RegisterView: View {
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+    }
+
+    // MARK: 種類タブ（スクロールスパイ）
+
+    private var typeTabBar: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(vm.types) { t in
+                        Button(vm.tabLabel(t)) {
+                            vm.selectedTypeId = t.typeId
+                            scrollRequest = t.typeId
+                        }
+                        .buttonStyle(AppButtonStyle(primary: t.typeId == vm.selectedTypeId))
+                        .frame(minWidth: 120, maxWidth: 240)
+                        .id(t.typeId)
+                    }
+                }
+            }
+            .frame(minHeight: 40, maxHeight: 56)
+            .onChange(of: vm.selectedTypeId) { _, newValue in
+                guard vm.types.contains(where: { $0.typeId == newValue }) else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(newValue, anchor: .center)
+                }
+            }
+        }
+    }
+
+    // MARK: 商品リスト（種類ごとのセクション）
+
+    private var productList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    if vm.types.isEmpty {
+                        Text("商品の種類がありません。メニューの「編集」で登録してください。")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 80, alignment: .center)
+                    }
+                    ForEach(vm.types) { t in
+                        productSection(t)
+                            .id(t.typeId)
+                    }
+                }
+                .padding(.horizontal, 2)
+                .padding(.bottom, 8)
+            }
+            .coordinateSpace(name: "register.productScroll")
+            .onPreferenceChange(ProductSectionOffsetKey.self) { offsets in
+                updateActiveType(from: offsets)
+            }
+            .onChange(of: scrollRequest) { _, newValue in
+                guard let newValue else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(newValue, anchor: .top)
+                }
+                scrollRequest = nil
+            }
+        }
+    }
+
+    private func productSection(_ t: ProductType) -> some View {
+        let products = vm.products(ofType: t.typeId)
+        return VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(vm.tabLabel(t)).font(.headline)
+                Text("\(products.count)件")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: ProductSectionOffsetKey.self,
+                        value: [t.typeId: geo.frame(in: .named("register.productScroll")).minY]
+                    )
+                }
+            )
+
+            if products.isEmpty {
+                Text("この種類の商品はありません")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 56, alignment: .center)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 240), spacing: 8)],
+                          spacing: 8) {
+                    ForEach(products) { p in
+                        ProductTile(product: p)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 上端にいちばん近い見出しの種類を、タブの選択状態に反映する。
+    private func updateActiveType(from offsets: [String: CGFloat]) {
+        guard !vm.types.isEmpty else { return }
+        let threshold: CGFloat = 16
+        let active = vm.types.last {
+            (offsets[$0.typeId] ?? CGFloat.greatestFiniteMagnitude) <= threshold
+        } ?? vm.types.first
+        guard let active, active.typeId != vm.selectedTypeId else { return }
+        vm.selectedTypeId = active.typeId
     }
 
     /// 入力中の在庫候補（A-2、C-6 #69）。ID・商品名の部分一致で絞る。
