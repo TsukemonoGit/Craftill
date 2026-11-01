@@ -273,17 +273,18 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
         sessionQueue.async { [weak self] in
             guard let self else { return }
 
-            self.session.beginConfiguration()
-            var configurationSucceeded = false
-            defer {
-                self.session.commitConfiguration()
-            }
+            let configurationSucceeded: Bool = {
+                self.session.beginConfiguration()
+                defer {
+                    self.session.commitConfiguration()
+                }
 
-            if self.configured {
-                configurationSucceeded = self.replaceInputOnSessionQueue(with: device)
-            } else {
+                if self.configured {
+                    return self.replaceInputOnSessionQueue(with: device)
+                }
+
                 guard self.replaceInputOnSessionQueue(with: device) else {
-                    return
+                    return false
                 }
 
                 let output = AVCaptureVideoDataOutput()
@@ -294,19 +295,20 @@ final class QRScannerController: NSObject, ObservableObject, AVCaptureVideoDataO
                     DispatchQueue.main.async {
                         self.status = "QR読み取りを開始できません"
                     }
-                    return
+                    return false
                 }
 
                 self.session.addOutput(output)
                 output.setSampleBufferDelegate(self, queue: self.videoQueue)
                 self.videoOutput = output
                 self.configured = true
-                configurationSucceeded = true
-            }
+
+                return true
+            }()
 
             guard configurationSucceeded else { return }
 
-            // 設定完了後に開始する。開始・停止・入力変更は同じ直列キュー上。
+            // commitConfiguration() 完了後にセッションを開始
             if !self.session.isRunning {
                 self.session.startRunning()
             }
