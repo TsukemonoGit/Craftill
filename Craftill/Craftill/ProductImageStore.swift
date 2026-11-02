@@ -159,6 +159,50 @@ enum ProductImageStore {
         return output as Data
     }
 
+    /// EXIF の向きを反映した CGImage を作る（切り取り UI 用）。
+    static func decodedCGImage(from data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 2400
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    /// CGImage を JPEG 化し、長辺 `maxPixel` にそろえる。
+    static func jpegData(from image: CGImage, maxPixel: CGFloat = 1600, quality: CGFloat = 0.85) -> Data? {
+        let longEdge = CGFloat(max(image.width, image.height))
+        let scale = min(1, maxPixel / max(1, longEdge))
+        let targetW = max(1, Int((CGFloat(image.width) * scale).rounded()))
+        let targetH = max(1, Int((CGFloat(image.height) * scale).rounded()))
+
+        guard let context = CGContext(
+            data: nil,
+            width: targetW,
+            height: targetH,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: targetW, height: targetH))
+        guard let scaled = context.makeImage() else { return nil }
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output, UTType.jpeg.identifier as CFString, 1, nil
+        ) else { return nil }
+        CGImageDestinationAddImage(
+            destination, scaled,
+            [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary
+        )
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return output as Data
+    }
+
     /// プレビュー用に縮小した CGImage を作る。
     static func cgImage(from data: Data, maxPixel: CGFloat = 320) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
