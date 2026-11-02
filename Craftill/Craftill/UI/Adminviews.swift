@@ -191,7 +191,7 @@ struct MenuView: View {
                 Item(id: "imageFolder", title: "画像の保存先", note: "撮影・選択した写真を originals/ などへ") {
                     vm.go(.imageFolder)
                 },
-                Item(id: "qr", title: "QRラベル生成", note: "商品IDのQR＋ID文字（印刷用）") {
+                Item(id: "qr", title: "商品一覧（QR生成）", note: "商品を選んで任意枚数のQRラベルを印刷") {
                     vm.go(.qrLabels)
                 }
             ]),

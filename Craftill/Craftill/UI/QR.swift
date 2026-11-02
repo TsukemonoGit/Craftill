@@ -48,8 +48,6 @@ struct QRImageView: View {
 struct QRLabelView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
-    @State private var scopeAll = true
-    @State private var typeId = ""
     @AppStorage("qrShowName") private var showName = true
 
     // 印刷用ページ設定（A4縦, pt）
@@ -57,109 +55,279 @@ struct QRLabelView: View {
     private let pageMargin: CGFloat = 24
     private let rowSpacing: CGFloat = 12
     private let printColumns = 4
+    private let maxRasterExportLabels = 240
 
-    private var targets: [Product] {
-        // 商品登録直後は、登録した商品のラベルだけを表示する。
-        if let focus = vm.qrFocusProductId {
-            return vm.inventory.filter { $0.id == focus }
+    private var filteredProducts: [Product] {
+        let filter = vm.qrListFilterTypeId
+        let keyword = vm.qrListSearchText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return vm.inventory.filter { p in
+            let typeOK = filter.isEmpty || p.typeId == filter
+            guard typeOK else { return false }
+            guard !keyword.isEmpty else { return true }
+            return p.id.lowercased().contains(keyword) || p.name.lowercased().contains(keyword)
         }
-        guard !scopeAll, !typeId.isEmpty else { return vm.inventory }
-        return vm.inventory.filter { $0.typeId == typeId }
+    }
+
+    private var queueTargets: [Product] {
+        vm.qrExpandedProducts
+    }
+
+    private var queueCountText: String {
+        "\(vm.qrQueue.count)種類 / \(vm.qrTotalLabels)枚"
+    }
+
+    private var canRasterExport: Bool {
+        !queueTargets.isEmpty && queueTargets.count <= maxRasterExportLabels
     }
 
     var body: some View {
-        AdminShell("QRラベル") {
+        AdminShell("QRラベル作成（商品一覧）") {
             VStack(alignment: .leading, spacing: 12) {
                 if let focus = vm.qrFocusProductId {
                     focusBanner(focus)
-                    if compact {
-                        VStack(alignment: .leading, spacing: 10) {
-                            nameToggle
-                            HStack(spacing: 10) { actionButtons }
-                        }
-                    } else {
-                        HStack(spacing: 12) {
-                            nameToggle
-                                .frame(maxWidth: 160, alignment: .leading)
-                            Spacer(minLength: 8)
-                            actionButtons
-                        }
-                    }
-                } else if compact {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle("全商品", isOn: $scopeAll)
-                            .toggleStyle(.switch)
-                        Picker("種類", selection: $typeId) {
-                            ForEach(vm.types) { t in Text(t.name).tag(t.typeId) }
-                        }
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity)
-                        .disabled(scopeAll)
-                        nameToggle
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 8)],
-                                  alignment: .leading, spacing: 8) {
-                            actionButtons
-                        }
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        Toggle("全商品", isOn: $scopeAll)
-                            .toggleStyle(.switch)
-                            .frame(maxWidth: 160, alignment: .leading)
-                        Picker("種類", selection: $typeId) {
-                            ForEach(vm.types) { t in Text(t.name).tag(t.typeId) }
-                        }
-                        .labelsHidden()
-                        .frame(maxWidth: 240)
-                        .disabled(scopeAll)
-                        nameToggle
-                            .frame(maxWidth: 160, alignment: .leading)
-                        Spacer(minLength: 8)
-                        actionButtons
-                    }
                 }
+                headerControls
                 Text("QRの中身＝商品ID。ID文字も併記しています。印刷して商品に貼ったあと、商品の編集画面から写真を撮影・選択できます。公開サイト用は「画像の保存先」で originals/ を選ぶと、同じ写真がビルド用に保存されます。")
                     .font(.caption).foregroundColor(.secondary)
 
+                if compact {
+                    VStack(spacing: 12) {
+                        listPanel
+                        queuePanel
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 12) {
+                        listPanel
+                        queuePanel
+                    }
+                }
+
+                previewPanel
+            }
+        }
+        .onAppear { setupOnAppear() }
+    }
+
+    private var headerControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if compact {
+                VStack(alignment: .leading, spacing: 8) {
+                    filterControls
+                    nameToggle
+                    actionButtons
+                }
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    filterControls
+                    nameToggle
+                        .frame(maxWidth: 160, alignment: .leading)
+                    Spacer(minLength: 8)
+                    actionButtons
+                }
+            }
+            Text("印刷キュー: \(queueCountText)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            if !canRasterExport, !queueTargets.isEmpty {
+                Text("PNG保存/共有は\(maxRasterExportLabels)枚まで。大量出力は「印刷」を使ってください。")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+        }
+    }
+
+    private var filterControls: some View {
+        Group {
+            if compact {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("商品ID・商品名で検索", text: $vm.qrListSearchText)
+                        .textFieldStyle(.roundedBorder)
+                    Picker("種類", selection: $vm.qrListFilterTypeId) {
+                        Text("すべての種類").tag("")
+                        ForEach(vm.types) { t in
+                            Text(vm.tabLabel(t)).tag(t.typeId)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    TextField("商品ID・商品名で検索", text: $vm.qrListSearchText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 220, maxWidth: 380)
+                    Picker("種類", selection: $vm.qrListFilterTypeId) {
+                        Text("すべての種類").tag("")
+                        ForEach(vm.types) { t in
+                            Text(vm.tabLabel(t)).tag(t.typeId)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 240)
+                }
+            }
+        }
+    }
+
+    private var listPanel: some View {
+        Panel(title: "商品一覧（追加元）") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Stepper(value: $vm.qrPendingCopies, in: 1...999) {
+                        Text("追加枚数: \(vm.qrPendingCopies)")
+                    }
+                    Spacer(minLength: 8)
+                    Button("絞り込み結果を各1枚追加") {
+                        vm.addManyToQRQueue(productIds: filteredProducts.map(\.id), copies: 1)
+                    }
+                    .buttonStyle(.app)
+                    Button("絞り込み結果を各\(vm.qrPendingCopies)枚追加") {
+                        vm.addManyToQRQueue(productIds: filteredProducts.map(\.id), copies: vm.qrPendingCopies)
+                    }
+                    .buttonStyle(.app)
+                }
+                if filteredProducts.isEmpty {
+                    Text("条件に合う商品がありません。")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(filteredProducts) { product in
+                                productRow(product)
+                            }
+                        }
+                    }
+                    .frame(minHeight: compact ? 220 : 300)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func productRow(_ product: Product) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(product.id)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                Text(product.name)
+                    .font(.callout)
+                    .lineLimit(1)
+                Text(vm.typeName(product.typeId))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("+1") { vm.addToQRQueue(productId: product.id, copies: 1) }
+                .buttonStyle(.app)
+            Button("+\(vm.qrPendingCopies)") {
+                vm.addToQRQueue(productId: product.id, copies: vm.qrPendingCopies)
+            }
+            .buttonStyle(.appPrimary)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.06)))
+    }
+
+    private var queuePanel: some View {
+        Panel(title: "印刷キュー") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("キュー: \(queueCountText)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 8)
+                    Button("全削除") { vm.clearQRQueue() }
+                        .buttonStyle(.app)
+                        .disabled(vm.qrQueue.isEmpty)
+                }
+                if vm.qrQueue.isEmpty {
+                    Text("まだキューがありません。商品一覧から追加してください。")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(vm.qrQueue) { item in
+                                if let p = vm.inventory.first(where: { $0.id == item.productId }) {
+                                    queueRow(product: p, item: item)
+                                }
+                            }
+                        }
+                    }
+                    .frame(minHeight: compact ? 180 : 260)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func queueRow(product: Product, item: LabelPrintItem) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(product.id)
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                Text(product.name)
+                    .font(.caption)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Stepper(value: Binding(
+                get: { item.copies },
+                set: { vm.setQRQueueCopies(productId: item.productId, copies: $0) }
+            ), in: 1...999) {
+                Text("\(item.copies)枚")
+                    .font(.caption)
+            }
+            Button("削除") { vm.removeFromQRQueue(productId: item.productId) }
+                .buttonStyle(.app)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.06)))
+    }
+
+    private var previewPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("プレビュー")
+                .font(.headline)
+            if queueTargets.isEmpty {
+                Text("印刷キューが空です。")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            } else {
                 ScrollView {
-                    QRGrid(products: targets, columns: compact ? 2 : 4, showName: showName)
+                    QRGrid(products: queueTargets, columns: compact ? 2 : 4, showName: showName)
                         .padding(8)
                 }
+                .frame(minHeight: compact ? 220 : 300)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.5)))
             }
         }
-        .onAppear { if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" } }
     }
-
 
     private var nameToggle: some View {
         Toggle("商品名を表示", isOn: $showName)
             .toggleStyle(.switch)
     }
 
-    @ViewBuilder
-    private var actionButtons: some View {
-        #if canImport(AppKit)
-        Button("PNGで保存") { savePNG() }.buttonStyle(.app)
-        Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
-        #elseif canImport(UIKit)
-        Button("共有") { sharePNG() }.buttonStyle(.app)
-        Button("印刷") { printLabels() }.buttonStyle(.appPrimary)
-        #endif
-    }
-
     /// 登録直後の1商品だけを表示しているときの案内。
     private func focusBanner(_ id: String) -> some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("登録した商品 \(id) のラベルを表示しています。").font(.callout.bold())
-                Text("印刷して商品に貼ってください。写真は商品の編集画面から撮影・選択できます（公開サイト用は「画像の保存先」で originals/ を選択）。")
+                Text("登録した商品 \(id) をキューへ追加しました。").font(.callout.bold())
+                Text("必要枚数に調整して印刷してください。写真は商品の編集画面から撮影・選択できます（公開サイト用は「画像の保存先」で originals/ を選択）。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             Spacer(minLength: 8)
-            Button("全商品を表示") { vm.qrFocusProductId = nil }
+            Button("フォーカス解除") { vm.qrFocusProductId = nil }
                 .buttonStyle(.app)
         }
         .padding(12)
@@ -167,8 +335,37 @@ struct QRLabelView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.green.opacity(0.4)))
     }
 
+    @ViewBuilder
+    private var actionButtons: some View {
+        #if canImport(AppKit)
+        Button("PNGで保存") { savePNG() }
+            .buttonStyle(.app)
+            .disabled(!canRasterExport)
+        Button("印刷") { printLabels() }
+            .buttonStyle(.appPrimary)
+            .disabled(queueTargets.isEmpty)
+        #elseif canImport(UIKit)
+        Button("共有") { sharePNG() }
+            .buttonStyle(.app)
+            .disabled(!canRasterExport)
+        Button("印刷") { printLabels() }
+            .buttonStyle(.appPrimary)
+            .disabled(queueTargets.isEmpty)
+        #endif
+    }
+
+    private func setupOnAppear() {
+        vm.normalizeQRQueue()
+        vm.qrPendingCopies = min(max(1, vm.qrPendingCopies), 999)
+        if let focus = vm.qrFocusProductId {
+            if !vm.qrQueue.contains(where: { $0.productId == focus }) {
+                vm.addToQRQueue(productId: focus, copies: 1)
+            }
+        }
+    }
+
     private var renderContent: some View {
-        QRGrid(products: targets, columns: 4, showName: showName)
+        QRGrid(products: queueTargets, columns: 4, showName: showName)
             .padding(24)
             .frame(width: 760)
             .background(Color.white)
@@ -188,7 +385,7 @@ struct QRLabelView: View {
     /// （長いIDなどでラベル高さが行ごとに異なっても見切れない）。
     @MainActor
     private func makePDFData() -> Data? {
-        let items = targets
+        let items = queueTargets
         guard !items.isEmpty else { return nil }
 
         let usableHeight = pageSize.height - pageMargin * 2
@@ -252,6 +449,10 @@ struct QRLabelView: View {
     #if canImport(AppKit)
     @MainActor
     private func savePNG() {
+        guard canRasterExport else {
+            vm.message = "PNG保存は\(maxRasterExportLabels)枚までです（現在 \(queueTargets.count)枚）。大量出力は「印刷」を使ってください。"
+            return
+        }
         let renderer = ImageRenderer(content: renderContent)
         renderer.scale = 2
         guard let image = renderer.nsImage,
@@ -304,6 +505,10 @@ struct QRLabelView: View {
     #elseif canImport(UIKit)
     @MainActor
     private func sharePNG() {
+        guard canRasterExport else {
+            vm.message = "共有は\(maxRasterExportLabels)枚までです（現在 \(queueTargets.count)枚）。大量出力は「印刷」を使ってください。"
+            return
+        }
         let renderer = ImageRenderer(content: renderContent)
         renderer.scale = 2
         guard let image = renderer.uiImage, let data = image.pngData() else {
@@ -381,7 +586,7 @@ struct QRGrid: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .top, spacing: 12) {
-                    ForEach(row) { p in
+                    ForEach(Array(row.enumerated()), id: \.offset) { _, p in
                         QRLabel(product: p, showName: showName)
                     }
                     if row.count < columns {

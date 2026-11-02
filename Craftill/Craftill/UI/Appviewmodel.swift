@@ -78,6 +78,13 @@ struct ReportRow: Identifiable {
     var amount: Int
 }
 
+struct LabelPrintItem: Identifiable, Equatable {
+    let productId: String
+    var copies: Int
+
+    var id: String { productId }
+}
+
 extension StockMode {
     var label: String {
         switch self {
@@ -157,6 +164,14 @@ final class AppViewModel: ObservableObject {
     /// QRラベル画面で、直前に登録した商品だけを表示するためのID。
     /// 商品登録直後の「QRを印刷」導線で使う。他の画面へ移ると解除する。
     @Published var qrFocusProductId: String? = nil
+    /// QRラベル作成キュー（同一商品は1行に集約し、copiesで枚数を管理する）。
+    @Published var qrQueue: [LabelPrintItem] = []
+    /// QRラベル作成の商品一覧フィルタ（空文字 = すべて）。
+    @Published var qrListFilterTypeId: String = ""
+    /// QRラベル作成の商品一覧検索（商品ID/商品名）。
+    @Published var qrListSearchText: String = ""
+    /// QRラベル作成で、一覧から追加するときの既定枚数。
+    @Published var qrPendingCopies: Int = 1
 
     private var ids = IdSequencer()
     private let db = Database.shared
@@ -343,6 +358,58 @@ final class AppViewModel: ObservableObject {
     }
 
     func managesStock(_ p: Product) -> Bool { p.managesStock(in: types) }
+
+    // MARK: QRラベル作成
+
+    var qrTotalLabels: Int { qrQueue.reduce(0) { $0 + $1.copies } }
+
+    var qrExpandedProducts: [Product] {
+        let map = Dictionary(uniqueKeysWithValues: inventory.map { ($0.id, $0) })
+        var result: [Product] = []
+        for item in qrQueue {
+            guard let product = map[item.productId], item.copies > 0 else { continue }
+            result.append(contentsOf: Array(repeating: product, count: item.copies))
+        }
+        return result
+    }
+
+    func addToQRQueue(productId: String, copies: Int) {
+        guard inventory.contains(where: { $0.id == productId }) else { return }
+        let add = min(max(1, copies), 999)
+        if let idx = qrQueue.firstIndex(where: { $0.productId == productId }) {
+            qrQueue[idx].copies = min(999, qrQueue[idx].copies + add)
+        } else {
+            qrQueue.append(LabelPrintItem(productId: productId, copies: add))
+        }
+    }
+
+    func addManyToQRQueue(productIds: [String], copies: Int) {
+        guard !productIds.isEmpty else { return }
+        for id in productIds {
+            addToQRQueue(productId: id, copies: copies)
+        }
+    }
+
+    func setQRQueueCopies(productId: String, copies: Int) {
+        let normalized = min(max(1, copies), 999)
+        guard let idx = qrQueue.firstIndex(where: { $0.productId == productId }) else { return }
+        qrQueue[idx].copies = normalized
+    }
+
+    func removeFromQRQueue(productId: String) {
+        qrQueue.removeAll { $0.productId == productId }
+    }
+
+    func clearQRQueue() {
+        qrQueue.removeAll()
+    }
+
+    func normalizeQRQueue() {
+        let valid = Set(inventory.map(\.id))
+        qrQueue = qrQueue
+            .filter { valid.contains($0.productId) }
+            .map { LabelPrintItem(productId: $0.productId, copies: min(max(1, $0.copies), 999)) }
+    }
 
     // MARK: 画面遷移
 
