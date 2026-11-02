@@ -161,7 +161,9 @@ struct QRLabelView: View {
             .background(Color.white)
     }
 
-    /// 行単位でページ分割したPDFを生成する。ラベルはページをまたがない。
+        /// 行単位でページ分割したPDFを生成する。ラベルはページをまたがない。
+    /// 行ごとに高さを実測し、累積高さで1ページに入る行を決める
+    /// （長いIDなどでラベル高さが行ごとに異なっても見切れない）。
     @MainActor
     private func makePDFData() -> Data? {
         let items = targets
@@ -169,22 +171,47 @@ struct QRLabelView: View {
 
         let usableHeight = pageSize.height - pageMargin * 2
 
-        // 1行分の高さを実測する。
-        var rowHeight: CGFloat = 0
-        let probe = ImageRenderer(content: pageView(Array(items.prefix(printColumns))))
-        probe.render { size, _ in rowHeight = size.height }
-        guard rowHeight > 0 else { return nil }
+        // 行に分割
+        let rows: [[Product]] = stride(from: 0, to: items.count, by: printColumns).map {
+            Array(items[$0..<min($0 + printColumns, items.count)])
+        }
 
-        let rowsPerPage = max(1, Int((usableHeight + rowSpacing) / (rowHeight + rowSpacing)))
-        let perPage = rowsPerPage * printColumns
+        // 各行の高さを実測
+        var heights: [CGFloat] = []
+        for row in rows {
+            let probe = ImageRenderer(content: pageView(row))
+            var h: CGFloat = 0
+            probe.render { size, _ in h = size.height }
+            guard h > 0 else { return nil }
+            heights.append(h)
+        }
 
+        // 累積高さでページに詰める
+        var pages: [[Product]] = []
+        var current: [Product] = []
+        var currentHeight: CGFloat = 0
+        for (row, h) in zip(rows, heights) {
+            if current.isEmpty {
+                current = row
+                currentHeight = h
+            } else if currentHeight + rowSpacing + h <= usableHeight {
+                current += row
+                currentHeight += rowSpacing + h
+            } else {
+                pages.append(current)
+                current = row
+                currentHeight = h
+            }
+        }
+        if !current.isEmpty { pages.append(current) }
+
+        // PDF生成
         let data = NSMutableData()
         var box = CGRect(origin: .zero, size: pageSize)
         guard let consumer = CGDataConsumer(data: data as CFMutableData),
               let ctx = CGContext(consumer: consumer, mediaBox: &box, nil) else { return nil }
 
-        for start in stride(from: 0, to: items.count, by: perPage) {
-            let chunk = Array(items[start..<min(start + perPage, items.count)])
+        for chunk in pages {
             let renderer = ImageRenderer(content: pageView(chunk))
             renderer.render { size, draw in
                 ctx.beginPDFPage(nil)
