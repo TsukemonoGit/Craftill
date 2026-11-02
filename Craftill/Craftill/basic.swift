@@ -899,6 +899,8 @@ func parseProductCSV(_ t: CSVTable,
     var seen = Set<String>()
     var needsStock = false
 
+    let typesWithProducts = Set(inventory.map { $0.typeId })
+
     for (i, row) in t.rows.enumerated() {
         if isBlank(row) { continue }
         let n = t.lineNumber(at: i)
@@ -919,8 +921,8 @@ func parseProductCSV(_ t: CSVTable,
         if !pid.isEmpty, !seen.insert(pid).inserted { bad("product_id", "ファイル内で重複") }
         if let e = existing {
             if e.typeId != tid { bad("type_id", "既存商品の種類は変更不可") }
-        } else if let k = num, k < ty.nextNo {
-            bad("product_id", "欠番の再利用（next_no \(ty.nextNo) 未満）")
+        } else if let k = num, k < ty.nextNo, typesWithProducts.contains(ty.typeId) {
+            bad("product_id", "番号 \(pid) は種類 \(ty.typeId) の next_no（\(ty.nextNo)）未満です。既存商品があるため、欠番の再利用として拒否しました")
         }
 
         let priceJpy = parseInt(cell(row, "price_jpy")) ?? 0
