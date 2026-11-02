@@ -4,6 +4,7 @@ import CoreImage.CIFilterBuiltins
 import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
+import PDFKit
 #elseif canImport(UIKit)
 import UIKit
 #endif
@@ -49,6 +50,12 @@ struct QRLabelView: View {
     @Environment(\.isCompactWidth) private var compact
     @State private var scopeAll = true
     @State private var typeId = ""
+
+    // 印刷用ページ設定（A4縦, pt）
+    private let pageSize = CGSize(width: 595.28, height: 841.89)
+    private let pageMargin: CGFloat = 24
+    private let rowSpacing: CGFloat = 12
+    private let printColumns = 4
 
     private var targets: [Product] {
         // 商品登録直後は、登録した商品のラベルだけを表示する。
@@ -145,6 +152,81 @@ struct QRLabelView: View {
             .background(Color.white)
     }
 
+    // MARK: - ページ分割印刷（共通）
+
+    /// 1ページ分のビュー。幅は用紙幅－左右余白。
+    private func pageView(_ chunk: [Product]) -> some View {
+        QRGrid(products: chunk, columns: printColumns)
+            .frame(width: pageSize.width - pageMargin * 2, alignment: .topLeading)
+            .background(Color.white)
+    }
+
+        /// 行単位でページ分割したPDFを生成する。ラベルはページをまたがない。
+    /// 行ごとに高さを実測し、累積高さで1ページに入る行を決める
+    /// （長いIDなどでラベル高さが行ごとに異なっても見切れない）。
+    @MainActor
+    private func makePDFData() -> Data? {
+        let items = targets
+        guard !items.isEmpty else { return nil }
+
+        let usableHeight = pageSize.height - pageMargin * 2
+
+        // 行に分割
+        let rows: [[Product]] = stride(from: 0, to: items.count, by: printColumns).map {
+            Array(items[$0..<min($0 + printColumns, items.count)])
+        }
+
+        // 各行の高さを実測
+        var heights: [CGFloat] = []
+        for row in rows {
+            let probe = ImageRenderer(content: pageView(row))
+            var h: CGFloat = 0
+            probe.render { size, _ in h = size.height }
+            guard h > 0 else { return nil }
+            heights.append(h)
+        }
+
+        // 累積高さでページに詰める
+        var pages: [[Product]] = []
+        var current: [Product] = []
+        var currentHeight: CGFloat = 0
+        for (row, h) in zip(rows, heights) {
+            if current.isEmpty {
+                current = row
+                currentHeight = h
+            } else if currentHeight + rowSpacing + h <= usableHeight {
+                current += row
+                currentHeight += rowSpacing + h
+            } else {
+                pages.append(current)
+                current = row
+                currentHeight = h
+            }
+        }
+        if !current.isEmpty { pages.append(current) }
+
+        // PDF生成
+        let data = NSMutableData()
+        var box = CGRect(origin: .zero, size: pageSize)
+        guard let consumer = CGDataConsumer(data: data as CFMutableData),
+              let ctx = CGContext(consumer: consumer, mediaBox: &box, nil) else { return nil }
+
+        for chunk in pages {
+            let renderer = ImageRenderer(content: pageView(chunk))
+            renderer.render { size, draw in
+                ctx.beginPDFPage(nil)
+                ctx.saveGState()
+                // PDF座標は左下原点。上端揃えで配置する。
+                ctx.translateBy(x: pageMargin, y: pageSize.height - pageMargin - size.height)
+                draw(ctx)
+                ctx.restoreGState()
+                ctx.endPDFPage()
+            }
+        }
+        ctx.closePDF()
+        return data as Data
+    }
+
     #if canImport(AppKit)
     @MainActor
     private func savePNG() {
@@ -173,18 +255,11 @@ struct QRLabelView: View {
 
     @MainActor
     private func printLabels() {
-        let content = renderContent.frame(width: 720)
-        let renderer = ImageRenderer(content: content)
-        renderer.scale = 2
-        guard let image = renderer.nsImage else {
+        guard let pdfData = makePDFData(),
+              let document = PDFDocument(data: pdfData) else {
             vm.message = "QR画像を作れませんでした"
             return
         }
-
-        let view = NSImageView(frame: NSRect(x: 0, y: 0, width: 720,
-                                             height: max(1, image.size.height * 720 / max(1, image.size.width))))
-        view.image = image
-        view.imageScaling = .scaleProportionallyUpOrDown
 
         let info = NSPrintInfo.shared.copy() as? NSPrintInfo ?? NSPrintInfo.shared
         info.orientation = .portrait
@@ -192,12 +267,15 @@ struct QRLabelView: View {
         info.bottomMargin = 18
         info.leftMargin = 18
         info.rightMargin = 18
-        info.horizontalPagination = .fit
-        info.verticalPagination = .automatic
         info.isHorizontallyCentered = true
         info.isVerticallyCentered = false
 
-        let op = NSPrintOperation(view: view, printInfo: info)
+        guard let op = document.printOperation(for: info,
+                                               scalingMode: .pageScaleToFit,
+                                               autoRotate: false) else {
+            vm.message = "印刷を開始できませんでした"
+            return
+        }
         op.showsPrintPanel = true
         op.run()
     }
@@ -223,19 +301,16 @@ struct QRLabelView: View {
 
     @MainActor
     private func printLabels() {
-        let content = renderContent.frame(width: 720)
-        let renderer = ImageRenderer(content: content)
-        renderer.scale = 2
-        guard let image = renderer.uiImage else {
+        guard let pdfData = makePDFData() else {
             vm.message = "QR画像を作れませんでした"
             return
         }
         let info = UIPrintInfo.printInfo()
-        info.outputType = .photo
+        info.outputType = .general
         info.jobName = "QRラベル"
         let controller = UIPrintInteractionController.shared
         controller.printInfo = info
-        controller.printingItem = image
+        controller.printingItem = pdfData
         if let root = topViewController() {
             controller.present(from: root.view.bounds, in: root.view,
                                animated: true, completionHandler: nil)
