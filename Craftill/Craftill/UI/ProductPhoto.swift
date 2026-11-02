@@ -178,8 +178,7 @@ struct ProductPhotoSection: View {
     }
 
     private func presentCropper(with data: Data) {
-        guard let normalized = ProductImageStore.normalizedJPEG(from: data, maxPixel: 2400),
-              let cgImage = ProductImageStore.decodedCGImage(from: normalized) else {
+        guard let cgImage = ProductImageStore.decodedCGImage(from: data) else {
             vm.message = "画像を読み込めませんでした（対応していない形式の可能性があります）"
             return
         }
@@ -387,10 +386,9 @@ private struct ProductPhotoCropSheet: View {
         let cropYTop = (crop.minY - imageOriginY) * sy
         let cropW = crop.width * sx
         let cropH = crop.height * sy
-        let cgY = CGFloat(image.height) - cropYTop - cropH
 
         let x = min(max(0, cropXTop), CGFloat(image.width - 1))
-        let y = min(max(0, cgY), CGFloat(image.height - 1))
+        let y = min(max(0, cropYTop), CGFloat(image.height - 1))
         let w = min(cropW, CGFloat(image.width) - x)
         let h = min(cropH, CGFloat(image.height) - y)
         let rect = CGRect(x: floor(x), y: floor(y), width: floor(w), height: floor(h)).integral
