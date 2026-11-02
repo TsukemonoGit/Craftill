@@ -55,6 +55,7 @@ struct QRLabelView: View {
     private let pageMargin: CGFloat = 24
     private let rowSpacing: CGFloat = 12
     private let printColumns = 4
+    private let maxRasterExportLabels = 240
 
     private var filteredProducts: [Product] {
         let filter = vm.qrListFilterTypeId
@@ -75,6 +76,10 @@ struct QRLabelView: View {
 
     private var queueCountText: String {
         "\(vm.qrQueue.count)種類 / \(vm.qrTotalLabels)枚"
+    }
+
+    private var canRasterExport: Bool {
+        !queueTargets.isEmpty && queueTargets.count <= maxRasterExportLabels
     }
 
     var body: some View {
@@ -125,6 +130,11 @@ struct QRLabelView: View {
             Text("印刷キュー: \(queueCountText)")
                 .font(.caption)
                 .foregroundColor(.secondary)
+            if !canRasterExport, !queueTargets.isEmpty {
+                Text("PNG保存/共有は\(maxRasterExportLabels)枚まで。大量出力は「印刷」を使ってください。")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
         }
     }
 
@@ -330,14 +340,14 @@ struct QRLabelView: View {
         #if canImport(AppKit)
         Button("PNGで保存") { savePNG() }
             .buttonStyle(.app)
-            .disabled(queueTargets.isEmpty)
+            .disabled(!canRasterExport)
         Button("印刷") { printLabels() }
             .buttonStyle(.appPrimary)
             .disabled(queueTargets.isEmpty)
         #elseif canImport(UIKit)
         Button("共有") { sharePNG() }
             .buttonStyle(.app)
-            .disabled(queueTargets.isEmpty)
+            .disabled(!canRasterExport)
         Button("印刷") { printLabels() }
             .buttonStyle(.appPrimary)
             .disabled(queueTargets.isEmpty)
@@ -439,6 +449,10 @@ struct QRLabelView: View {
     #if canImport(AppKit)
     @MainActor
     private func savePNG() {
+        guard canRasterExport else {
+            vm.message = "PNG保存は\(maxRasterExportLabels)枚までです（現在 \(queueTargets.count)枚）。大量出力は「印刷」を使ってください。"
+            return
+        }
         let renderer = ImageRenderer(content: renderContent)
         renderer.scale = 2
         guard let image = renderer.nsImage,
@@ -491,6 +505,10 @@ struct QRLabelView: View {
     #elseif canImport(UIKit)
     @MainActor
     private func sharePNG() {
+        guard canRasterExport else {
+            vm.message = "共有は\(maxRasterExportLabels)枚までです（現在 \(queueTargets.count)枚）。大量出力は「印刷」を使ってください。"
+            return
+        }
         let renderer = ImageRenderer(content: renderContent)
         renderer.scale = 2
         guard let image = renderer.uiImage, let data = image.pngData() else {
@@ -568,7 +586,7 @@ struct QRGrid: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .top, spacing: 12) {
-                    ForEach(row) { p in
+                    ForEach(Array(row.enumerated()), id: \.offset) { _, p in
                         QRLabel(product: p, showName: showName)
                     }
                     if row.count < columns {
