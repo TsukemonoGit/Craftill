@@ -83,16 +83,14 @@ struct QRLabelView: View {
     }
 
     private var labelColumns: Int {
-        min(max(2, qrLabelColumns), 6)
+        min(max(4, qrLabelColumns), 6)
     }
 
     private var labelSizeName: String {
         switch labelColumns {
-        case 2: return "大"
-        case 3: return "やや大"
         case 4: return "標準"
-        case 5: return "やや小"
-        default: return "小"
+        case 5: return "小"
+        default: return "極小"
         }
     }
 
@@ -190,8 +188,8 @@ struct QRLabelView: View {
     private var sizeControls: some View {
         Stepper(value: Binding(
             get: { labelColumns },
-            set: { qrLabelColumns = min(max(2, $0), 6) }
-        ), in: 2...6) {
+            set: { qrLabelColumns = min(max(4, $0), 6) }
+        ), in: 4...6) {
             Text("ラベルサイズ: \(labelSizeName)（\(labelColumns)列）")
                 .font(.caption)
         }
@@ -382,7 +380,7 @@ struct QRLabelView: View {
     }
 
     private func setupOnAppear() {
-        qrLabelColumns = min(max(2, qrLabelColumns), 6)
+        qrLabelColumns = min(max(4, qrLabelColumns), 6)
         vm.normalizeQRQueue()
         vm.qrPendingCopies = min(max(1, vm.qrPendingCopies), 999)
         if let focus = vm.qrFocusProductId {
