@@ -50,6 +50,7 @@ struct QRLabelView: View {
     @Environment(\.isCompactWidth) private var compact
     @State private var scopeAll = true
     @State private var typeId = ""
+    @AppStorage("qrShowName") private var showName = true
 
     // 印刷用ページ設定（A4縦, pt）
     private let pageSize = CGSize(width: 595.28, height: 841.89)
@@ -71,7 +72,19 @@ struct QRLabelView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if let focus = vm.qrFocusProductId {
                     focusBanner(focus)
-                    HStack(spacing: 10) { actionButtons }
+                    if compact {
+                        VStack(alignment: .leading, spacing: 10) {
+                            nameToggle
+                            HStack(spacing: 10) { actionButtons }
+                        }
+                    } else {
+                        HStack(spacing: 12) {
+                            nameToggle
+                                .frame(maxWidth: 160, alignment: .leading)
+                            Spacer(minLength: 8)
+                            actionButtons
+                        }
+                    }
                 } else if compact {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("全商品", isOn: $scopeAll)
@@ -82,6 +95,7 @@ struct QRLabelView: View {
                         .labelsHidden()
                         .frame(maxWidth: .infinity)
                         .disabled(scopeAll)
+                        nameToggle
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 8)],
                                   alignment: .leading, spacing: 8) {
                             actionButtons
@@ -98,6 +112,8 @@ struct QRLabelView: View {
                         .labelsHidden()
                         .frame(maxWidth: 240)
                         .disabled(scopeAll)
+                        nameToggle
+                            .frame(maxWidth: 160, alignment: .leading)
                         Spacer(minLength: 8)
                         actionButtons
                     }
@@ -106,7 +122,7 @@ struct QRLabelView: View {
                     .font(.caption).foregroundColor(.secondary)
 
                 ScrollView {
-                    QRGrid(products: targets, columns: compact ? 2 : 4)
+                    QRGrid(products: targets, columns: compact ? 2 : 4, showName: showName)
                         .padding(8)
                 }
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
@@ -114,6 +130,12 @@ struct QRLabelView: View {
             }
         }
         .onAppear { if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" } }
+    }
+
+
+    private var nameToggle: some View {
+        Toggle("商品名を表示", isOn: $showName)
+            .toggleStyle(.switch)
     }
 
     @ViewBuilder
@@ -146,7 +168,7 @@ struct QRLabelView: View {
     }
 
     private var renderContent: some View {
-        QRGrid(products: targets, columns: 4)
+        QRGrid(products: targets, columns: 4, showName: showName)
             .padding(24)
             .frame(width: 760)
             .background(Color.white)
@@ -156,7 +178,7 @@ struct QRLabelView: View {
 
     /// 1ページ分のビュー。幅は用紙幅－左右余白。
     private func pageView(_ chunk: [Product]) -> some View {
-        QRGrid(products: chunk, columns: printColumns)
+        QRGrid(products: chunk, columns: printColumns, showName: showName)
             .frame(width: pageSize.width - pageMargin * 2, alignment: .topLeading)
             .background(Color.white)
     }
@@ -347,6 +369,7 @@ struct QRLabelView: View {
 struct QRGrid: View {
     let products: [Product]
     let columns: Int
+    var showName: Bool = true
 
     private var rows: [[Product]] {
         stride(from: 0, to: products.count, by: max(1, columns)).map {
@@ -359,7 +382,7 @@ struct QRGrid: View {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(row) { p in
-                        QRLabel(product: p)
+                        QRLabel(product: p, showName: showName)
                     }
                     if row.count < columns {
                         ForEach(0..<(columns - row.count), id: \.self) { _ in
@@ -374,6 +397,15 @@ struct QRGrid: View {
 
 private struct QRLabel: View {
     let product: Product
+    let showName: Bool
+
+    /// 表示する商品名。非表示設定、または空（空白のみ含む）の場合は nil。
+    private var displayName: String? {
+        guard showName else { return nil }
+        let trimmed = product.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
 
     var body: some View {
         VStack(spacing: 4) {
@@ -387,11 +419,13 @@ private struct QRLabel: View {
             }
             Text(product.id)
                 .font(.system(size: 14, weight: .bold, design: .monospaced))
-            Text(product.name)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            if let name = displayName {
+                Text(name)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
         }
         .padding(8)
         .frame(maxWidth: .infinity)
