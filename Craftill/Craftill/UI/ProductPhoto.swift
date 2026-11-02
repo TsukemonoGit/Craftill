@@ -34,6 +34,10 @@ struct ProductPhotoSection: View {
     @State private var photoItem: PhotosPickerItem? = nil
     @State private var storedPreview: CGImage? = nil
     @State private var pendingPreview: CGImage? = nil
+    @State private var showCropper = false
+    @State private var cropSourceImage: CGImage? = nil
+
+    private let cropAspectRatio: CGFloat = 3.0 / 2.0
 
     private var previewImage: CGImage? {
         if pendingData != nil { return pendingPreview }
@@ -94,7 +98,7 @@ struct ProductPhotoSection: View {
                     if previewImage != nil && !isRuntimeImage {
                         FieldHelp("この写真はアプリに同梱されています。差し替えるには originals/ の原本を変更して画像ビルドしてください。")
                     }
-                    FieldHelp("登録した写真はレジの商品タイルに表示されます。「画像の保存先」で originals/ を選ぶと、公開サイト用の画像ビルドにもそのまま使えます。")
+                    FieldHelp("登録した写真は切り取り範囲を確認して保存します。保存後はレジの商品タイルに表示されます。「画像の保存先」で originals/ を選ぶと、公開サイト用の画像ビルドにもそのまま使えます。")
                 }
             }
         }
@@ -107,7 +111,7 @@ struct ProductPhotoSection: View {
                     vm.message = "画像ファイルを読み込めませんでした"
                     return
                 }
-                apply(data)
+                presentCropper(with: data)
             case .failure(let error):
                 vm.message = "画像を選択できませんでした: \(error.localizedDescription)"
             }
@@ -132,13 +136,22 @@ struct ProductPhotoSection: View {
                 vm.message = "写真を読み込めませんでした"
                 return
             }
-            apply(data)
+            presentCropper(with: data)
         }
         #if os(macOS) || os(iOS)
         .sheet(isPresented: $showCamera) {
-            CameraCaptureSheet { data in apply(data) }
+            CameraCaptureSheet { data in presentCropper(with: data) }
         }
         #endif
+        .sheet(isPresented: $showCropper, onDismiss: {
+            cropSourceImage = nil
+        }) {
+            if let image = cropSourceImage {
+                ProductPhotoCropSheet(image: image, aspectRatio: cropAspectRatio) { cropped in
+                    commitCropped(cropped)
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -147,7 +160,7 @@ struct ProductPhotoSection: View {
             Image(decorative: image, scale: 1)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 120, height: 120)
+                .frame(width: 120, height: 80)
                 .clipped()
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.5)))
         } else {
@@ -156,7 +169,7 @@ struct ProductPhotoSection: View {
                 Text("写真なし").font(.caption)
             }
             .foregroundColor(.secondary)
-            .frame(width: 120, height: 120)
+            .frame(width: 120, height: 80)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.1)))
             .overlay(RoundedRectangle(cornerRadius: 6)
                 .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
@@ -164,14 +177,223 @@ struct ProductPhotoSection: View {
         }
     }
 
-    private func apply(_ data: Data) {
-        guard let jpeg = ProductImageStore.normalizedJPEG(from: data) else {
+    private func presentCropper(with data: Data) {
+        guard let cgImage = ProductImageStore.decodedCGImage(from: data) else {
             vm.message = "画像を読み込めませんでした（対応していない形式の可能性があります）"
+            return
+        }
+        cropSourceImage = cgImage
+        showCropper = true
+    }
+
+    private func commitCropped(_ cropped: CGImage) {
+        guard let jpeg = ProductImageStore.jpegData(from: cropped, maxPixel: 1600, quality: 0.85) else {
+            vm.message = "切り取り画像を保存できませんでした"
             return
         }
         pendingData = jpeg
         pendingPreview = ProductImageStore.cgImage(from: jpeg)
         removeImage = false
+        showCropper = false
+    }
+}
+
+private struct ProductPhotoCropSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let image: CGImage
+    let aspectRatio: CGFloat
+    let onConfirm: (CGImage) -> Void
+
+    @State private var canvasSize: CGSize = .zero
+    @State private var zoom: CGFloat = 1
+    @State private var lastZoom: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var dragStart: CGSize = .zero
+
+    private var minZoom: CGFloat {
+        guard canvasSize.width > 1, canvasSize.height > 1 else { return 1 }
+        let fit = fittedImageSize(in: canvasSize)
+        let crop = cropRect(in: canvasSize)
+        let neededX = crop.width / max(1, fit.width)
+        let neededY = crop.height / max(1, fit.height)
+        return max(1, neededX, neededY)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("写真の切り取り")
+                .font(.headline)
+            Text("見せたい位置に合わせて、拡大・移動して保存します。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            GeometryReader { geo in
+                let size = geo.size
+                let fit = fittedImageSize(in: size)
+                let crop = cropRect(in: size)
+                let effectiveZoom = max(zoom, minZoom)
+                let imageSize = CGSize(width: fit.width * effectiveZoom, height: fit.height * effectiveZoom)
+                let center = CGPoint(x: size.width / 2 + offset.width, y: size.height / 2 + offset.height)
+
+                ZStack {
+                    Color.black.opacity(0.88)
+
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .frame(width: imageSize.width, height: imageSize.height)
+                        .position(center)
+
+                    Path { path in
+                        path.addRect(CGRect(origin: .zero, size: size))
+                        path.addRoundedRect(
+                            in: crop,
+                            cornerSize: CGSize(width: 8, height: 8)
+                        )
+                    }
+                    .fill(Color.black.opacity(0.5), style: FillStyle(eoFill: true))
+
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white, lineWidth: 2)
+                        .frame(width: crop.width, height: crop.height)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            let candidate = CGSize(
+                                width: dragStart.width + value.translation.width,
+                                height: dragStart.height + value.translation.height
+                            )
+                            offset = clampedOffset(candidate, canvas: size, zoom: effectiveZoom)
+                        }
+                        .onEnded { _ in
+                            dragStart = offset
+                        }
+                )
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            zoom = max(minZoom, lastZoom * value)
+                            offset = clampedOffset(offset, canvas: size, zoom: zoom)
+                        }
+                        .onEnded { _ in
+                            zoom = max(minZoom, zoom)
+                            lastZoom = zoom
+                            offset = clampedOffset(offset, canvas: size, zoom: zoom)
+                            dragStart = offset
+                        }
+                )
+                .onAppear {
+                    canvasSize = size
+                    let required = max(minZoom, 1)
+                    zoom = required
+                    lastZoom = required
+                    offset = clampedOffset(offset, canvas: size, zoom: required)
+                    dragStart = offset
+                }
+                .onChange(of: size) { _, newSize in
+                    canvasSize = newSize
+                    let required = max(minZoom, 1)
+                    if zoom < required {
+                        zoom = required
+                        lastZoom = required
+                    }
+                    offset = clampedOffset(offset, canvas: newSize, zoom: zoom)
+                    dragStart = offset
+                }
+            }
+            .frame(minWidth: 320, idealWidth: 720, maxWidth: 860,
+                   minHeight: 260, idealHeight: 420, maxHeight: 560)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            HStack(spacing: 10) {
+                Button("リセット") {
+                    let required = max(minZoom, 1)
+                    zoom = required
+                    lastZoom = required
+                    offset = .zero
+                    dragStart = .zero
+                }
+                .buttonStyle(.app)
+
+                Spacer()
+
+                Button("キャンセル") { dismiss() }
+                    .buttonStyle(.app)
+                Button("この範囲で保存") {
+                    guard let cropped = makeCroppedImage() else { return }
+                    onConfirm(cropped)
+                    dismiss()
+                }
+                .buttonStyle(.appPrimary)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 360, idealWidth: 780, maxWidth: 900,
+               minHeight: 360, idealHeight: 640, maxHeight: 760)
+    }
+
+    private func fittedImageSize(in canvas: CGSize) -> CGSize {
+        let iw = CGFloat(image.width)
+        let ih = CGFloat(image.height)
+        guard iw > 0, ih > 0, canvas.width > 1, canvas.height > 1 else {
+            return .zero
+        }
+        let scale = min(canvas.width / iw, canvas.height / ih)
+        return CGSize(width: iw * scale, height: ih * scale)
+    }
+
+    private func cropRect(in canvas: CGSize) -> CGRect {
+        let inset: CGFloat = 20
+        let maxW = max(40, canvas.width - inset * 2)
+        let maxH = max(40, canvas.height - inset * 2)
+        var width = maxW
+        var height = width / aspectRatio
+        if height > maxH {
+            height = maxH
+            width = height * aspectRatio
+        }
+        let x = (canvas.width - width) / 2
+        let y = (canvas.height - height) / 2
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private func clampedOffset(_ value: CGSize, canvas: CGSize, zoom: CGFloat) -> CGSize {
+        let fit = fittedImageSize(in: canvas)
+        let crop = cropRect(in: canvas)
+        let shownW = fit.width * zoom
+        let shownH = fit.height * zoom
+        let limitX = max(0, (shownW - crop.width) / 2)
+        let limitY = max(0, (shownH - crop.height) / 2)
+        return CGSize(
+            width: min(max(value.width, -limitX), limitX),
+            height: min(max(value.height, -limitY), limitY)
+        )
+    }
+
+    private func makeCroppedImage() -> CGImage? {
+        let fit = fittedImageSize(in: canvasSize)
+        guard fit.width > 1, fit.height > 1 else { return nil }
+        let crop = cropRect(in: canvasSize)
+        let effectiveZoom = max(zoom, minZoom)
+        let shownW = fit.width * effectiveZoom
+        let shownH = fit.height * effectiveZoom
+        let imageOriginX = (canvasSize.width - shownW) / 2 + offset.width
+        let imageOriginY = (canvasSize.height - shownH) / 2 + offset.height
+
+        let sx = CGFloat(image.width) / shownW
+        let sy = CGFloat(image.height) / shownH
+        let cropXTop = (crop.minX - imageOriginX) * sx
+        let cropYTop = (crop.minY - imageOriginY) * sy
+        let cropW = crop.width * sx
+        let cropH = crop.height * sy
+
+        let x = min(max(0, cropXTop), CGFloat(image.width - 1))
+        let y = min(max(0, cropYTop), CGFloat(image.height - 1))
+        let w = min(cropW, CGFloat(image.width) - x)
+        let h = min(cropH, CGFloat(image.height) - y)
+        let rect = CGRect(x: floor(x), y: floor(y), width: floor(w), height: floor(h)).integral
+        guard rect.width >= 2, rect.height >= 2 else { return nil }
+        return image.cropping(to: rect)
     }
 }
 
