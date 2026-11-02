@@ -49,12 +49,12 @@ struct QRLabelView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
     @AppStorage("qrShowName") private var showName = true
+    @AppStorage("qrLabelColumns") private var qrLabelColumns = 4
 
     // 印刷用ページ設定（A4縦, pt）
     private let pageSize = CGSize(width: 595.28, height: 841.89)
     private let pageMargin: CGFloat = 24
     private let rowSpacing: CGFloat = 12
-    private let printColumns = 4
     private let maxRasterExportLabels = 240
 
     private var filteredProducts: [Product] {
@@ -80,6 +80,20 @@ struct QRLabelView: View {
 
     private var canRasterExport: Bool {
         !queueTargets.isEmpty && queueTargets.count <= maxRasterExportLabels
+    }
+
+    private var labelColumns: Int {
+        min(max(2, qrLabelColumns), 6)
+    }
+
+    private var labelSizeName: String {
+        switch labelColumns {
+        case 2: return "大"
+        case 3: return "やや大"
+        case 4: return "標準"
+        case 5: return "やや小"
+        default: return "小"
+        }
     }
 
     var body: some View {
@@ -115,12 +129,14 @@ struct QRLabelView: View {
             if compact {
                 VStack(alignment: .leading, spacing: 8) {
                     filterControls
+                    sizeControls
                     nameToggle
                     actionButtons
                 }
             } else {
                 HStack(alignment: .center, spacing: 12) {
                     filterControls
+                    sizeControls
                     nameToggle
                         .frame(maxWidth: 160, alignment: .leading)
                     Spacer(minLength: 8)
@@ -169,6 +185,17 @@ struct QRLabelView: View {
                 }
             }
         }
+    }
+
+    private var sizeControls: some View {
+        Stepper(value: Binding(
+            get: { labelColumns },
+            set: { qrLabelColumns = min(max(2, $0), 6) }
+        ), in: 2...6) {
+            Text("ラベルサイズ: \(labelSizeName)（\(labelColumns)列）")
+                .font(.caption)
+        }
+        .frame(maxWidth: compact ? .infinity : 220, alignment: .leading)
     }
 
     private var listPanel: some View {
@@ -302,7 +329,7 @@ struct QRLabelView: View {
                     .foregroundColor(.secondary)
             } else {
                 ScrollView {
-                    QRGrid(products: queueTargets, columns: compact ? 2 : 4, showName: showName)
+                    QRGrid(products: queueTargets, columns: labelColumns, showName: showName)
                         .padding(8)
                 }
                 .frame(minHeight: compact ? 220 : 300)
@@ -355,6 +382,7 @@ struct QRLabelView: View {
     }
 
     private func setupOnAppear() {
+        qrLabelColumns = min(max(2, qrLabelColumns), 6)
         vm.normalizeQRQueue()
         vm.qrPendingCopies = min(max(1, vm.qrPendingCopies), 999)
         if let focus = vm.qrFocusProductId {
@@ -365,7 +393,7 @@ struct QRLabelView: View {
     }
 
     private var renderContent: some View {
-        QRGrid(products: queueTargets, columns: 4, showName: showName)
+        QRGrid(products: queueTargets, columns: labelColumns, showName: showName)
             .padding(24)
             .frame(width: 760)
             .background(Color.white)
@@ -375,7 +403,7 @@ struct QRLabelView: View {
 
     /// 1ページ分のビュー。幅は用紙幅－左右余白。
     private func pageView(_ chunk: [Product]) -> some View {
-        QRGrid(products: chunk, columns: printColumns, showName: showName)
+        QRGrid(products: chunk, columns: labelColumns, showName: showName)
             .frame(width: pageSize.width - pageMargin * 2, alignment: .topLeading)
             .background(Color.white)
     }
@@ -391,8 +419,8 @@ struct QRLabelView: View {
         let usableHeight = pageSize.height - pageMargin * 2
 
         // 行に分割
-        let rows: [[Product]] = stride(from: 0, to: items.count, by: printColumns).map {
-            Array(items[$0..<min($0 + printColumns, items.count)])
+        let rows: [[Product]] = stride(from: 0, to: items.count, by: labelColumns).map {
+            Array(items[$0..<min($0 + labelColumns, items.count)])
         }
 
         // 各行の高さを実測
