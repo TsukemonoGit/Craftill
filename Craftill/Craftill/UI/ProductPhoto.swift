@@ -27,6 +27,7 @@ struct ProductPhotoSection: View {
     var showsTitle = true
 
     @State private var showSourceDialog = false
+    @State private var showFolderSetup = false
     @State private var showDeleteConfirm = false
     @State private var showCamera = false
     @State private var showLibrary = false
@@ -67,7 +68,14 @@ struct ProductPhotoSection: View {
             HStack(alignment: .top, spacing: 12) {
                 preview
                 VStack(alignment: .leading, spacing: 8) {
-                    Button("写真を追加") { showSourceDialog = true }
+                    // 写真は保存先フォルダにだけ保存するため、未設定なら先に選ばせる。
+                    Button("写真を追加") {
+                        if ProductImageFolder.url == nil {
+                            showFolderSetup = true
+                        } else {
+                            showSourceDialog = true
+                        }
+                    }
                         .buttonStyle(.app)
                         .frame(maxWidth: 220)
                         .confirmationDialog("写真の追加方法", isPresented: $showSourceDialog,
@@ -98,7 +106,7 @@ struct ProductPhotoSection: View {
                     if previewImage != nil && !isRuntimeImage {
                         FieldHelp("この写真はアプリに同梱されています。差し替えるには originals/ の原本を変更して画像ビルドしてください。")
                     }
-                    FieldHelp("登録した写真は切り取り範囲を確認して保存します。保存後はレジの商品タイルに表示されます。「画像の保存先」で originals/ を選ぶと、公開サイト用の画像ビルドにもそのまま使えます。")
+                    FieldHelp("登録した写真は切り取り範囲を確認して保存します。保存先は「画像の保存先」で選んだフォルダで、保存後はレジの商品タイルに表示されます。公開サイト用の画像ビルドもそのフォルダを使います。")
                 }
             }
         }
@@ -117,6 +125,16 @@ struct ProductPhotoSection: View {
             }
         }
         .photosPicker(isPresented: $showLibrary, selection: $photoItem, matching: .images)
+        .sheet(isPresented: $showFolderSetup) {
+            // フォルダを選べば、そのまま写真の追加へ進む。
+            ImageFolderSetupSheet(
+                onDone: {
+                    showFolderSetup = false
+                    showSourceDialog = true
+                },
+                onCancel: { showFolderSetup = false }
+            )
+        }
         .task(id: "\(fileName)|\(removeImage)") {
             // 削除中でも、同梱画像があればそれを表示する（同梱画像は削除できない）。
             let url = removeImage

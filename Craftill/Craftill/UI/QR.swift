@@ -101,7 +101,7 @@ struct QRLabelView: View {
                     focusBanner(focus)
                 }
                 headerControls
-                Text("QRの中身＝商品ID。ID文字も併記しています。印刷して商品に貼ったあと、商品の編集画面から写真を撮影・選択できます。公開サイト用は「画像の保存先」で originals/ を選ぶと、同じ写真がビルド用に保存されます。")
+                Text("QRの中身＝商品ID。ID文字も併記しています。印刷して商品に貼ったあと、商品の編集画面から写真を撮影・選択できます。写真は保存先フォルダにそのまま保存されるため、公開サイト用は画像ビルドを実行するだけです。")
                     .font(.caption).foregroundColor(.secondary)
 
                 if compact {
@@ -347,7 +347,7 @@ struct QRLabelView: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("登録した商品 \(id) をキューへ追加しました。").font(.callout.bold())
-                Text("必要枚数に調整して印刷してください。写真は商品の編集画面から撮影・選択できます（公開サイト用は「画像の保存先」で originals/ を選択）。")
+                Text("必要枚数に調整して印刷してください。写真は商品の編集画面から撮影・選択でき、保存先フォルダにそのまま保存されます（公開サイト用は画像ビルドで生成）。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
