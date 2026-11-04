@@ -7,14 +7,15 @@ import UniformTypeIdentifiers
 // 実行時に登録した商品写真（編集画面の「写真を追加」）
 //
 // カメラ撮影・写真ライブラリ・ファイル選択のどれも同じ経路で保存する。
-// - アプリ内コピー: Application Support/Craftill/Images/<商品ID>.jpg
-//   外部フォルダが未設定でもレジに表示するためのコピー。
-// - 外部フォルダ: ProductImageFolder で選んだ originals/ など。
-//   ウェブサイトの画像ビルド（scripts/build_images.py）が読む。
+// 保存先は写真追加の前に必ず選ぶ外部フォルダ（originals/ など）だけ。
+// ウェブサイトの画像ビルド（scripts/build_images.py）がそのフォルダを読む。
+// 旧版が Application Support に残したコピーは読み取り専用で残し、
+// 「画像の保存先」画面から新しいフォルダへまとめて書き出せる。
 // ════════════════════════════════════════════════════════════
 
 enum ProductImageError: LocalizedError {
     case emptyName
+    case folderNotConfigured
     case externalFolderUnavailable
     case externalWriteFailed(String)
 
@@ -22,16 +23,19 @@ enum ProductImageError: LocalizedError {
         switch self {
         case .emptyName:
             return "画像のファイル名が空です"
+        case .folderNotConfigured:
+            return "画像の保存先フォルダが未設定です。「画像の保存先」でフォルダを選んでください。"
         case .externalFolderUnavailable:
-            return "選択した画像フォルダが見つかりません。設定を確認してください。"
+            return "選択した画像フォルダが見つかりません。「画像の保存先」で選び直してください。"
         case .externalWriteFailed(let detail):
-            return "端末内には保存しましたが、選択したフォルダに書き出せませんでした: \(detail)"
+            return "選択したフォルダに書き出せませんでした: \(detail)"
         }
     }
 }
 
 enum ProductImageStore {
-    /// アプリ内の表示用コピーの保存先。
+    /// 旧版が表示用コピーを置いていたアプリ内領域。
+    /// 現在は書き込まず、移行前の写真の読み取り・削除にだけ使う。
     static var localDirectory: URL {
         let fm = FileManager.default
         let base = (try? fm.url(for: .applicationSupportDirectory,
@@ -53,7 +57,7 @@ enum ProductImageStore {
         return folder.appendingPathComponent(sanitized(fileName))
     }
 
-    /// 表示に使う URL。外部フォルダを優先し、無ければアプリ内コピー。
+    /// 表示に使う URL。外部フォルダを優先し、無ければ旧版のアプリ内コピー。
     static func displayURL(fileName: String) -> URL? {
         guard !fileName.isEmpty else { return nil }
         if let external = externalURL(fileName: fileName),
@@ -71,7 +75,7 @@ enum ProductImageStore {
         displayURL(fileName: fileName) != nil
     }
 
-    /// アプリ内コピーまたは外部フォルダに実体があるか（同梱画像は含めない）。
+    /// 外部フォルダまたは旧版のアプリ内コピーに実体があるか（同梱画像は含めない）。
     static func hasRuntimeImage(fileName: String) -> Bool {
         guard !fileName.isEmpty else { return false }
         if let external = externalURL(fileName: fileName),
@@ -90,36 +94,32 @@ enum ProductImageStore {
         return loadLocalData(fileName: fileName)
     }
 
-    /// アプリ内コピーだけを読む（外部フォルダへの書き出し用）。
+    /// 旧版が残したアプリ内コピーだけを読む（フォルダへの書き出し用）。
     static func loadLocalData(fileName: String) -> Data? {
         guard !fileName.isEmpty else { return nil }
         return try? Data(contentsOf: localURL(fileName: fileName))
     }
 
-    /// アプリ内コピーと外部フォルダの両方へ保存する。
-    /// 外部フォルダへの書き出しに失敗しても、アプリ内コピーは残る。
+    /// 保存先フォルダへ保存する。フォルダは写真追加の前に必ず選ぶため、
+    /// 未設定・到達不能のまま保存しようとした場合はエラーにする。
     static func save(_ data: Data, fileName: String) throws {
         guard !fileName.isEmpty else { throw ProductImageError.emptyName }
+        guard let external = externalURL(fileName: fileName) else {
+            throw ProductImageError.folderNotConfigured
+        }
 
-        // 1. レジ表示用のコピー
-        try FileManager.default.createDirectory(at: localDirectory, withIntermediateDirectories: true)
-        try data.write(to: localURL(fileName: fileName), options: .atomic)
-
-        // 2. ウェブサイトの画像ビルド用コピー
-        if let external = externalURL(fileName: fileName) {
-            let folder = external.deletingLastPathComponent()
-            guard FileManager.default.fileExists(atPath: folder.path) else {
-                throw ProductImageError.externalFolderUnavailable
-            }
-            do {
-                try data.write(to: external, options: .atomic)
-            } catch {
-                throw ProductImageError.externalWriteFailed(error.localizedDescription)
-            }
+        let folder = external.deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: folder.path) else {
+            throw ProductImageError.externalFolderUnavailable
+        }
+        do {
+            try data.write(to: external, options: .atomic)
+        } catch {
+            throw ProductImageError.externalWriteFailed(error.localizedDescription)
         }
     }
 
-    /// アプリ内コピーと外部フォルダの両方から削除する。
+    /// 外部フォルダと旧版のアプリ内コピーの両方から削除する。
     static func delete(fileName: String) throws {
         guard !fileName.isEmpty else { return }
 

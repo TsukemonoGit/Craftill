@@ -3,9 +3,11 @@ import Foundation
 // ════════════════════════════════════════════════════════════
 // 商品写真の外部保存先（リポジトリの originals/ など）
 //
-// カメラ撮影・ファイル選択のどちらも、ここで選んだフォルダへ
-// 「商品ID.jpg」で保存する。フォルダはセキュリティスコープ付き
-// ブックマークとして UserDefaults に保存し、次回起動時も使う。
+// カメラ撮影・ファイル選択のどちらも、ここで選んだフォルダへだけ
+// 「商品ID.jpg」で保存する（アプリ内への保存はしない）。
+// 未設定のまま写真を追加しようとした時に、その場で選択を求める。
+// フォルダはセキュリティスコープ付きブックマークとして UserDefaults に
+// 保存し、次回起動時も使う。
 // ════════════════════════════════════════════════════════════
 
 enum ProductImageFolder {
@@ -37,13 +39,6 @@ enum ProductImageFolder {
         let bookmark = try makeBookmark(for: newURL)
         UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
         resolve(bookmark)
-    }
-
-    /// 外部フォルダの設定を解除し、アプリ内保存に戻す。
-    static func clear() {
-        stopAccess()
-        UserDefaults.standard.removeObject(forKey: bookmarkKey)
-        url = nil
     }
 
     private static func resolve(_ data: Data) {
