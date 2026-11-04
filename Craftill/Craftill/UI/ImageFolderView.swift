@@ -21,7 +21,7 @@ struct ImageFolderView: View {
                 Panel(title: "保存先フォルダ") {
                     if let url = currentURL {
                         InfoBox(text: url.path, size: 14, tint: .green)
-                        Text("カメラで撮影した写真も、ファイルから選んだ写真も、このフォルダに「商品ID.jpg」で保存します。")
+                        Text("カメラで撮影した写真も、ファイルから選んだ写真も、このフォルダに「商品ID.jpg」で保存します。フォルダに直接画像を置く場合も、ファイル名を「商品ID.jpg」にしてください。")
                             .font(.callout)
                         if !FileManager.default.fileExists(atPath: url.path) {
                             Text("このフォルダにアクセスできません。フォルダを選び直してください。")
@@ -52,15 +52,6 @@ struct ImageFolderView: View {
                     }
                 }
 
-                Panel(title: "ウェブサイト用の画像ビルド") {
-                    FieldHelp("先に「CSV取り込み・書き出し」で商品マスタ CSV を書き出してください。リポジトリの originals/ を選ぶと、そのまま画像ビルドで使えます。")
-                    Text("python3 scripts/build_images.py --csv <商品マスタCSV>")
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                    FieldHelp("別のフォルダを選んだ場合は、--originals にそのフォルダのパスを指定してください。")
-                }
-
-                FieldHelp("保存する写真は JPEG（長辺1600px）にそろえます。元のファイル形式のまま残したい場合は、originals/ に手で置いてください。")
             }
             .frame(maxWidth: 720, alignment: .leading)
         }
@@ -128,7 +119,7 @@ struct ImageFolderSetupSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("商品写真の保存先を決めてください").font(.headline)
-            Text("撮影・選択した写真は、ここで選ぶフォルダに「商品ID.jpg」で保存します。アプリ内には保存しません。公開サイト用の画像ビルドもこのフォルダを読むため、リポジトリの originals/ を選んでください。")
+            Text("カメラで撮影した写真も、ファイルから選んだ写真も、このフォルダに「商品ID.jpg」で保存します。アプリ内には保存しません。フォルダに直接画像を置く場合も、ファイル名を「商品ID.jpg」にしてください。")
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
             if let errorText {

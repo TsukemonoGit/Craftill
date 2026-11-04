@@ -297,7 +297,7 @@ struct SnapshotProduct: Codable, Equatable {
     let priceSats: Int?        // 空の場合あり
     let attrs: [String?]       // 項目の並びは attrLabels に合わせる
     let stock: Int?            // 在庫管理なし型は nil
-    let hasImage: Bool         // 保持項目ではない。`bundledImageName` の実在から導出する（A-14）
+    let hasImage: Bool         // 保持項目ではない。`bundledImageName` の実在（保存先フォルダ・同梱画像）から導出する（A-14）
 }
 
 struct Snapshot: Codable, Equatable {
