@@ -1353,7 +1353,12 @@ struct ProductEditor: View {
                 try ProductImageStore.delete(fileName: savedFileName)
             }
         } catch {
-            vm.message = "商品は保存しました。写真: \(error.localizedDescription)"
+            // 写真の保存に失敗した時は入力と画像データを残し、保存先を直して
+            // 確定し直せるようにする（再確定は新規ではなく更新になるよう編集状態にする）。
+            if editingId == nil { editingId = newId }
+            showConfirm = false
+            vm.message = "商品は保存しましたが、写真を保存できませんでした。保存先フォルダを確認して、もう一度確定してください（\(error.localizedDescription)）"
+            return
         }
         if editingId == nil {
             pendingAdded = vm.inventory.first { $0.id == newId }
@@ -1427,8 +1432,8 @@ struct ProductConfirmSheet: View {
 // MARK: - 商品登録直後の案内
 
 /// 商品を追加した直後に、QR印刷 → 写真 → 画像ビルドの順番を案内する。
-/// 端末内の写真は編集画面から登録できる。公開サイト用は従来どおり
-/// 商品IDのファイル名で `originals/` に置くことを明示する。
+/// 写真は編集画面から登録でき、「画像の保存先」で選んだフォルダに
+/// 商品IDのファイル名で保存されることを明示する。
 struct ProductRegisteredSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.isCompactWidth) private var compact
@@ -1453,8 +1458,8 @@ struct ProductRegisteredSheet: View {
                 } else {
                     stepRow("2", "商品を編集して「商品写真」から撮影・選択する（あとからでも追加できます）")
                 }
-                stepRow("3", "公開サイト用は「画像の保存先」で originals/ を選び、画像ビルドする")
-                FieldHelp("アプリで登録した写真は端末内に保存されます。「画像の保存先」で originals/ を選ぶと、同じ写真がビルド用フォルダにも \(product.id).jpg で保存されます。")
+                stepRow("3", "公開サイト用は画像ビルド（scripts/build_images.py）を実行する")
+                FieldHelp("アプリで登録した写真は保存先フォルダに \(product.id).jpg で保存されています。画像ビルドでレジ同梱用・Web用の画像を生成してください。")
             }
             Text("登録した商品IDは変更できません。QRラベルと写真のファイル名は、このIDに合わせてください。")
                 .font(.caption)
@@ -2048,7 +2053,7 @@ struct PriceListView: View {
                         TableRowView(cells: [p.id, p.name], widths: [100, 240])
                     }
                     if vm.productsWithoutImage.isEmpty { Text("なし").foregroundColor(.secondary) }
-                    Text("アプリ内で登録した写真はここに含まれません。originals/ と画像ビルドで作る画像の有無を確認します。")
+                    Text("保存先フォルダに登録した写真はここに含まれません。originals/ と画像ビルドで作る画像の有無を確認します。")
                         .font(.caption).foregroundColor(.secondary)
                 }
             }

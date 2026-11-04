@@ -2,9 +2,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 // ════════════════════════════════════════════════════════════
-// 商品写真の保存先
-// カメラ撮影・ファイル選択のどちらも、ここで選んだフォルダへ
+// 商品写真の保存先（必須）
+// カメラ撮影・ファイル選択のどちらも、ここで選んだフォルダへだけ
 // 「商品ID.jpg」で保存する。originals/ を選べば画像ビルドで使える。
+// 未設定のまま写真を追加しようとした時は ImageFolderSetupSheet で選ばせる。
 // ════════════════════════════════════════════════════════════
 
 struct ImageFolderView: View {
@@ -30,28 +31,24 @@ struct ImageFolderView: View {
                     } else {
                         InfoBox(text: ProductImageFolder.isConfigured
                                 ? "設定済みのフォルダにアクセスできません"
-                                : "アプリ内（既定）",
+                                : "未設定",
                                 size: 14, tint: .yellow)
                         Text(ProductImageFolder.isConfigured
-                             ? "フォルダを選び直してください。いまはアプリ内のコピーだけを使います。"
-                             : "いまはアプリ内に保存しています。レジには表示されますが、公開サイト用の画像ビルドには使えません。")
+                             ? "フォルダが移動・削除された可能性があります。選び直してください。"
+                             : "写真の保存にはフォルダが必要です。フォルダを選んでください。")
                             .font(.callout)
                     }
 
                     HStack(spacing: 10) {
                         Button("フォルダを選ぶ") { showPicker = true }
                             .buttonStyle(.appPrimary)
-                        if currentURL != nil || ProductImageFolder.isConfigured {
-                            Button("既定に戻す") { resetFolder() }
-                                .buttonStyle(.app)
-                        }
                     }
 
                     if currentURL != nil {
                         Button("既存の写真をこのフォルダへ書き出す") { exportExisting() }
                             .buttonStyle(.app)
                             .disabled(busy)
-                        FieldHelp("フォルダを変更しても、既存の写真は自動では移動しません。このボタンで、いまアプリにある写真をまとめて書き出せます。")
+                        FieldHelp("フォルダを変更しても、既存の写真は自動では移動しません。このボタンで書き出せるのは旧版がアプリ内に残した写真だけです。変更前のフォルダに書き出した写真は、Finder／エクスプローラで手動で移動してください。")
                     }
                 }
 
@@ -87,12 +84,6 @@ struct ImageFolderView: View {
         }
     }
 
-    private func resetFolder() {
-        ProductImageFolder.clear()
-        currentURL = nil
-        vm.message = "画像の保存先をアプリ内に戻しました"
-    }
-
     private func exportExisting() {
         guard currentURL != nil else { return }
         busy = true
@@ -102,8 +93,9 @@ struct ImageFolderView: View {
         var failed: [String] = []
         for product in vm.inventory {
             let name = product.bundledImageName
-            guard let data = ProductImageStore.loadLocalData(fileName: name)
-                ?? ProductImageStore.loadData(fileName: name) else { continue }
+            // 現在の保存先を優先して読み、無いものだけ旧版のアプリ内コピーから拾う。
+            // （旧コピーを優先すると、差し替え済みの新しい写真を古い写真で上書きする）
+            guard let data = ProductImageStore.loadData(fileName: name) else { continue }
             do {
                 try ProductImageStore.save(data, fileName: name)
                 exported += 1
@@ -116,6 +108,59 @@ struct ImageFolderView: View {
             vm.message = "\(exported)件の写真を書き出しました"
         } else {
             vm.message = "\(exported)件を書き出しました（失敗: \(failed.joined(separator: ", "))）"
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════
+// 保存先フォルダの選択（写真追加の前に必要）
+// 写真は選んだフォルダにだけ保存する。保存先が未設定のまま
+// 「写真を追加」が押された時に表示し、選べばそのまま追加へ進む。
+// ════════════════════════════════════════════════════════════
+
+struct ImageFolderSetupSheet: View {
+    let onDone: () -> Void
+    let onCancel: () -> Void
+
+    @State private var showPicker = false
+    @State private var errorText: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("商品写真の保存先を決めてください").font(.headline)
+            Text("撮影・選択した写真は、ここで選ぶフォルダに「商品ID.jpg」で保存します。アプリ内には保存しません。公開サイト用の画像ビルドもこのフォルダを読むため、リポジトリの originals/ を選んでください。")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            if let errorText {
+                Text(errorText)
+                    .font(.callout)
+                    .foregroundColor(.red)
+            }
+            HStack(spacing: 10) {
+                Button("あとで") { onCancel() }
+                    .buttonStyle(.app)
+                Button("フォルダを選ぶ") { showPicker = true }
+                    .buttonStyle(.appPrimary)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 320, idealWidth: 520, maxWidth: 600)
+        .fileImporter(isPresented: $showPicker, allowedContentTypes: [.folder]) { result in
+            switch result {
+            case .success(let url):
+                do {
+                    try ProductImageFolder.set(url: url)
+                    onDone()
+                } catch {
+                    errorText = "保存先を設定できませんでした: \(error.localizedDescription)"
+                }
+            case .failure(let error):
+                // キャンセルはエラー表示しない（選び直せばよい）。
+                let nsError = error as NSError
+                if !(nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError) {
+                    errorText = "フォルダを選択できませんでした: \(error.localizedDescription)"
+                }
+            }
         }
     }
 }
