@@ -7,7 +7,7 @@ export default {
       return new Response("Not Found", { status: 404 });
     }
     const auth = request.headers.get("Authorization") || "";
-    if (auth !== `Bearer ${env.WRITE_SECRET}`) {
+    if (!env.WRITE_SECRET || auth !== `Bearer ${env.WRITE_SECRET}`) {
       return new Response("Unauthorized", { status: 401 });
     }
     let body;
