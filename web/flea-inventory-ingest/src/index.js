@@ -1,7 +1,44 @@
 const KEY = "inventory:v1";
 
-const isPlainObject = (value) =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const STOCK_MODES = new Set(["counted", "unique", "none"]);
+
+const isPlainObject = (v) =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+const isString = (v) => typeof v === "string";
+const isInt = (v) => Number.isInteger(v);
+const isOptional = (v, check) => v === undefined || v === null || check(v);
+const isDateString = (v) => isString(v) && !Number.isNaN(Date.parse(v));
+
+const isValidType = (t) =>
+  isPlainObject(t) &&
+  isString(t.type_id) &&
+  isString(t.name) &&
+  STOCK_MODES.has(t.stock_mode) &&
+  Array.isArray(t.attr_labels) &&
+  t.attr_labels.every(isString);
+
+const isValidProduct = (p) =>
+  isPlainObject(p) &&
+  isString(p.product_id) &&
+  isString(p.type_id) &&
+  isString(p.name) &&
+  isInt(p.price_jpy) &&
+  isOptional(p.price_sats, isInt) &&
+  Array.isArray(p.attrs) &&
+  p.attrs.every((a) => a === null || isString(a)) &&
+  isOptional(p.stock, isInt) &&
+  typeof p.has_image === "boolean";
+
+const isValidSnapshot = (s) => {
+  if (!isPlainObject(s)) return false;
+  if (!isDateString(s.created_at)) return false;
+  if (!Array.isArray(s.types) || !s.types.every(isValidType)) return false;
+  if (!Array.isArray(s.products) || !s.products.every(isValidProduct)) {
+    return false;
+  }
+  const typeIds = new Set(s.types.map((t) => t.type_id));
+  return s.products.every((p) => typeIds.has(p.type_id));
+};
 
 export default {
   async fetch(request, env) {
@@ -29,11 +66,7 @@ export default {
       return new Response("Bad Request", { status: 400 });
     }
 
-    if (
-      !isPlainObject(parsed) ||
-      !Array.isArray(parsed.types) ||
-      !parsed.types.every(isPlainObject)
-    ) {
+    if (!isValidSnapshot(parsed)) {
       return new Response("Bad Request", { status: 400 });
     }
 
