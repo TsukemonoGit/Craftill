@@ -1,0 +1,18 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "flea-inventory-view",
+	"compatibility_date": "2026-11-02",
+	"compatibility_flags": [
+		"nodejs_als"
+	],
+	"main": ".svelte-kit/cloudflare/_worker.js",
+	"assets": {
+		"binding": "ASSETS",
+		"directory": ".svelte-kit/cloudflare"
+	},
+	"kv_namespaces": [
+		{ "binding": "INVENTORY_KV", "id": "18269a86917943f3a1b26380443f7152" }
+	],
+	"workers_dev": true,
+	"preview_urls": false
+}
