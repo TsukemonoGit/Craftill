@@ -1741,16 +1741,34 @@ final class AppViewModel: ObservableObject {
 
     // MARK: 公開サイト送信（A-14）
 
-    func saveSyncSettings() {
-        let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = syncToken.trimmingCharacters(in: .whitespacesAndNewlines)
+    @discardableResult
+    func saveSyncSettings(endpoint newEndpoint: String? = nil,
+                          newToken: String? = nil) -> Bool {
+        let endpoint = (newEndpoint ?? syncEndpoint).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let newToken {
+            let token = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard SyncSettings.saveToken(token) else {
+                message = "トークンを Keychain に保存できませんでした。送信先は変更していません"
+                return false
+            }
+            syncToken = token
+        }
         SyncSettings.endpoint = endpoint
-        let tokenSaved = SyncSettings.saveToken(token)
         syncEndpoint = endpoint
-        syncToken = token
-        message = tokenSaved
-            ? "送信先を保存しました"
-            : "送信先は保存しましたが、トークンを Keychain に保存できませんでした"
+        message = "送信先を保存しました"
+        return true
+    }
+
+    @discardableResult
+    func deleteSyncToken() -> Bool {
+        let deleted = SyncSettings.saveToken("")
+        if deleted {
+            syncToken = ""
+            message = "認証トークンを削除しました"
+        } else {
+            message = "認証トークンを削除できませんでした"
+        }
+        return deleted
     }
 
     /// 実際にスナップショットを送信する。成功ログは HTTP 2xx のときだけ残す。
@@ -1764,7 +1782,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         guard let url = URL(string: endpoint), url.scheme != nil else {
-            recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です: \(endpoint)")
+            recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です")
             return
         }
         guard isOnline else {

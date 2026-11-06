@@ -451,7 +451,10 @@ struct GroupEditor: View {
     var body: some View {
         AdaptiveColumns(spacing: 16) {
             Panel(title: "グループ一覧") {
-                TableRowView(cells: ["グループID", "ラベル", "使用状況"], widths: [120, 180, 90], header: true)
+                TableRowView(cells: ["グループID", "ラベル", "使用状況"],
+                             widths: [120, 180, 90],
+                             header: true,
+                             actionWidth: compact ? 0 : 200)
                 ForEach(vm.groups) { g in
                     groupRow(g)
                 }
@@ -476,21 +479,22 @@ struct GroupEditor: View {
 
     @ViewBuilder
     private func groupRow(_ g: ProductGroup) -> some View {
-        let table = TableRowView(cells: [g.groupId, g.label, vm.isGroupInUse(g.groupId) ? "使用中" : "未使用"],
-                                 widths: [120, 180, 90])
+        let cells = [g.groupId, g.label, vm.isGroupInUse(g.groupId) ? "使用中" : "未使用"]
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                table
-                HStack(spacing: 6) {
+                TableRowView(cells: cells, widths: [120, 180, 90])
+                HStack(spacing: 8) {
                     editButton(g)
                     deleteButton(g)
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            HStack(spacing: 6) {
-                table
-                editButton(g)
-                deleteButton(g)
+            TableRowView(cells: cells, widths: [120, 180, 90], actionWidth: 200) {
+                HStack(spacing: 8) {
+                    editButton(g)
+                    deleteButton(g)
+                }
             }
         }
     }
@@ -502,13 +506,13 @@ struct GroupEditor: View {
             editing = true
         }
         .buttonStyle(.app)
-        .frame(minWidth: 80, maxWidth: 120)
+        .frame(width: 104)
     }
 
     private func deleteButton(_ g: ProductGroup) -> some View {
         Button("削除") { vm.deleteGroup(g.groupId) }
             .buttonStyle(.app)
-            .frame(minWidth: 60, maxWidth: 80)
+            .frame(width: 80)
             .disabled(vm.isGroupInUse(g.groupId))
     }
 
@@ -567,7 +571,9 @@ struct TypeEditor: View {
             Panel(title: "種類一覧") {
                 FieldHelp("行の「編集」で内容をフォームに読み込みます。種類を追加すると、その種類の商品を登録できるようになります。")
                 TableRowView(cells: ["種類ID", "表示名", "接頭辞", "桁", "在庫の扱い", "グループ", "next_no"],
-                             widths: [90, 140, 60, 40, 110, 110, 70], header: true)
+                             widths: [90, 140, 60, 40, 110, 110, 70],
+                             header: true,
+                             actionWidth: compact ? 0 : 88)
                 ForEach(vm.types) { t in
                     typeRow(t)
                 }
@@ -625,23 +631,25 @@ struct TypeEditor: View {
 
     @ViewBuilder
     private func typeRow(_ t: ProductType) -> some View {
-        let table = TableRowView(cells: [t.typeId, t.name, t.idPrefix, "\(t.idDigits)", t.stockMode.label,
-                                         vm.groupLabel(t.groupId), "\(t.nextNo)"],
-                                 widths: [90, 140, 60, 40, 110, 110, 70])
-        let button = Button("編集") { load(t) }
-            .buttonStyle(.app)
-            .frame(minWidth: 52, maxWidth: 80)
+        let cells = [t.typeId, t.name, t.idPrefix, "\(t.idDigits)", t.stockMode.label,
+                     vm.groupLabel(t.groupId), "\(t.nextNo)"]
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                table
-                button
+                TableRowView(cells: cells, widths: [90, 140, 60, 40, 110, 110, 70])
+                editButton(t)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            HStack(spacing: 6) {
-                table
-                button
+            TableRowView(cells: cells, widths: [90, 140, 60, 40, 110, 110, 70], actionWidth: 88) {
+                editButton(t)
             }
         }
+    }
+
+    private func editButton(_ t: ProductType) -> some View {
+        Button("編集") { load(t) }
+            .buttonStyle(.app)
+            .frame(width: 80)
     }
 
     private func load(_ t: ProductType) {
@@ -926,7 +934,9 @@ struct ProductEditor: View {
                     .padding(.vertical, 8)
             } else {
                 TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開", "写真"],
-                             widths: [65, 115, 140, 55, 55, 45, 45, 40], header: true)
+                             widths: [65, 115, 140, 55, 55, 45, 45, 40],
+                             header: true,
+                             actionWidth: compact ? 0 : 88)
                 ForEach(filteredInventory) { p in
                     productRow(p)
                 }
@@ -945,26 +955,28 @@ struct ProductEditor: View {
 
     @ViewBuilder
     private func productRow(_ p: Product) -> some View {
-        let table = TableRowView(cells: [p.id, vm.typeName(p.typeId), p.name, "\(p.priceJpy)",
-                                         p.priceSats.map { "\($0)" } ?? "",
-                                         p.stock.map { "\($0)" } ?? "―",
-                                         p.isPublic ? "1" : "0",
-                                         p.hasDisplayImage ? "✓" : "―"],
-                                 widths: [65, 115, 140, 55, 55, 45, 45, 40])
-        let button = Button("編集") { load(p) }
-            .buttonStyle(.app)
-            .frame(minWidth: 52, maxWidth: 80)
+        let cells = [p.id, vm.typeName(p.typeId), p.name, "\(p.priceJpy)",
+                     p.priceSats.map { "\($0)" } ?? "",
+                     p.stock.map { "\($0)" } ?? "―",
+                     p.isPublic ? "1" : "0",
+                     p.hasDisplayImage ? "✓" : "―"]
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                table
-                button
+                TableRowView(cells: cells, widths: [65, 115, 140, 55, 55, 45, 45, 40])
+                editButton(p)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            HStack(spacing: 6) {
-                table
-                button
+            TableRowView(cells: cells, widths: [65, 115, 140, 55, 55, 45, 45, 40], actionWidth: 88) {
+                editButton(p)
             }
         }
+    }
+
+    private func editButton(_ p: Product) -> some View {
+        Button("編集") { load(p) }
+            .buttonStyle(.app)
+            .frame(width: 80)
     }
 
     // MARK: フォーム
@@ -1883,7 +1895,9 @@ struct SalesHistoryView: View {
         AdminShell("販売履歴") {
             VStack(alignment: .leading, spacing: 10) {
                 TableRowView(cells: ["販売ID", "状態", "方法", "円", "sats", "完了 / 確認時刻", "返金済み"],
-                             widths: [170, 90, 100, 80, 90, 170, 80], header: true)
+                             widths: [170, 90, 100, 80, 90, 170, 80],
+                             header: true,
+                             actionWidth: compact ? 0 : 300)
                 if vm.sales.isEmpty { Text("記録なし").foregroundColor(.secondary) }
                 ForEach(vm.sales.reversed()) { s in
                     saleRow(s)
@@ -1896,49 +1910,40 @@ struct SalesHistoryView: View {
 
     @ViewBuilder
     private func saleRow(_ s: Sale) -> some View {
-        let table = TableRowView(cells: [s.id, s.status.rawValue, s.method.rawValue,
-                                         s.totalJpy.map { Fmt.num($0) } ?? "―",
-                                         s.totalSats.map { Fmt.num($0) } ?? "―",
-                                         s.completedAt == nil ? "確認 " + Fmt.time(s.confirmedAt) + "（中断）" : Fmt.time(s.completedAt),
-                                         s.refunded ? "済" : "―"],
-                                 widths: [170, 90, 100, 80, 90, 170, 80])
-        let buttons = VStack(spacing: 6) {
+        let cells = [s.id, s.status.rawValue, s.method.rawValue,
+                     s.totalJpy.map { Fmt.num($0) } ?? "―",
+                     s.totalSats.map { Fmt.num($0) } ?? "―",
+                     s.completedAt == nil ? "確認 " + Fmt.time(s.confirmedAt) + "（中断）" : Fmt.time(s.completedAt),
+                     s.refunded ? "済" : "―"]
+        if compact {
+            VStack(alignment: .leading, spacing: 6) {
+                TableRowView(cells: cells, widths: [170, 90, 100, 80, 90, 170, 80])
+                actionButtons(s)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        } else {
+            TableRowView(cells: cells, widths: [170, 90, 100, 80, 90, 170, 80], actionWidth: 300) {
+                actionButtons(s)
+            }
+        }
+    }
+
+    private func actionButtons(_ s: Sale) -> some View {
+        HStack(spacing: 8) {
             Button("取消（PIN）") {
                 vm.dialogPin = ""
                 vm.dialog = .voidSale(s.id)
             }
             .buttonStyle(.app)
+            .frame(width: 120)
             .disabled(s.status != .completed)
+
             Button("返金済み設定（PIN）") {
                 vm.requirePinWithValue("返金済み設定") { entered in vm.toggleRefunded(s.id, pin: entered) }
             }
             .buttonStyle(.app)
+            .frame(width: 170)
             .disabled(s.status != .voided || s.totalSats == nil)
-        }
-        if compact {
-            VStack(alignment: .leading, spacing: 6) {
-                table
-                buttons
-            }
-        } else {
-            HStack(spacing: 6) {
-                table
-                VStack(spacing: 6) {
-                    Button("取消（PIN）") {
-                        vm.dialogPin = ""
-                        vm.dialog = .voidSale(s.id)
-                    }
-                    .buttonStyle(.app).frame(minWidth: 90, maxWidth: 130)
-                    .disabled(s.status != .completed)
-                }
-                VStack(spacing: 6) {
-                    Button("返金済み設定（PIN）") {
-                        vm.requirePinWithValue("返金済み設定") { entered in vm.toggleRefunded(s.id, pin: entered) }
-                    }
-                    .buttonStyle(.app).frame(minWidth: 120, maxWidth: 180)
-                    .disabled(s.status != .voided || s.totalSats == nil)
-                }
-            }
         }
     }
 }
@@ -2175,15 +2180,40 @@ struct DataManagementView: View {
 struct SyncView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
+    @State private var editingSettings = false
+    @State private var endpointDraft = ""
+    @State private var tokenDraft = ""
+    @State private var confirmingDeleteToken = false
 
     var body: some View {
         AdminShell("公開サイト送信") {
             VStack(alignment: .leading, spacing: 12) {
                 Panel(title: "送信先（A-14）") {
-                    LabeledField(label: "受信エンドポイント（例: https://…/api/snapshot）",
-                                 text: $vm.syncEndpoint, required: true)
-                    LabeledField(label: "認証トークン（Keychain に保存）", text: $vm.syncToken)
-                    Button("送信先を保存") { vm.saveSyncSettings() }.buttonStyle(.app)
+                    if editingSettings {
+                        LabeledField(label: "受信エンドポイント（例: https://…/api/snapshot）",
+                                     text: $endpointDraft, required: true)
+                        LabeledField(label: "認証トークン（変更する場合だけ入力）",
+                                     text: $tokenDraft, secure: true)
+                        HStack(spacing: 8) {
+                            Text(tokenStatusText)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer(minLength: 8)
+                            if !vm.syncToken.isEmpty {
+                                Button("トークンを削除") { confirmingDeleteToken = true }
+                                    .buttonStyle(.app)
+                                    .frame(width: 150)
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            Button("保存") { saveSettings() }.buttonStyle(.appPrimary)
+                            Button("キャンセル") { editingSettings = false }.buttonStyle(.app)
+                        }
+                    } else {
+                        settingsSummaryRow("受信エンドポイント", value: maskedEndpoint)
+                        settingsSummaryRow("認証トークン", value: vm.syncToken.isEmpty ? "未設定" : "保存済み")
+                        Button("送信先を編集") { beginEditing() }.buttonStyle(.app)
+                    }
                 }
                 if compact {
                     VStack(spacing: 10) {
@@ -2191,6 +2221,7 @@ struct SyncView: View {
                         Button("公開サイトへ送信") { vm.sendSnapshot() }
                             .buttonStyle(.appPrimary)
                             .frame(maxWidth: .infinity, minHeight: 52)
+                            .disabled(editingSettings)
                         InfoBox(text: "画像の版識別子: \(ImageBuildInfo.version)（\(ImageBuildInfo.imageCount)件）", size: 12, bold: false)
                     }
                 } else {
@@ -2199,6 +2230,7 @@ struct SyncView: View {
                         Button("公開サイトへ送信") { vm.sendSnapshot() }
                             .buttonStyle(.appPrimary)
                             .frame(maxWidth: 280, minHeight: 52)
+                            .disabled(editingSettings)
                         InfoBox(text: "画像の版識別子: \(ImageBuildInfo.version)（\(ImageBuildInfo.imageCount)件）", size: 12, bold: false)
                     }
                 }
@@ -2210,6 +2242,62 @@ struct SyncView: View {
                 Text("送信失敗は会計・在庫に影響しない。送信対象は公開商品のスナップショットのみ（グループ・野良・画像データは含めない）。")
                     .font(.caption).foregroundColor(.secondary)
             }
+        }
+        .alert("認証トークンを削除しますか？", isPresented: $confirmingDeleteToken) {
+            Button("削除", role: .destructive) { deleteToken() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("保存済みの認証トークンを端末から削除します。")
+        }
+    }
+
+    private var maskedEndpoint: String {
+        let endpoint = vm.syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        return endpoint.isEmpty ? "未設定" : "設定済み（••••）"
+    }
+
+    private var tokenStatusText: String {
+        if !tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "トークン: 入力あり（保存で確定）"
+        }
+        return vm.syncToken.isEmpty ? "トークン: 未設定" : "トークン: 保存済み"
+    }
+
+    private func settingsSummaryRow(_ label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 120, alignment: .leading)
+            Text(value)
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func beginEditing() {
+        endpointDraft = vm.syncEndpoint
+        tokenDraft = ""
+        editingSettings = true
+    }
+
+    private func saveSettings() {
+        let endpoint = endpointDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else {
+            vm.message = "受信エンドポイントを入力してください"
+            return
+        }
+        let token = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if vm.saveSyncSettings(endpoint: endpoint, newToken: token.isEmpty ? nil : token) {
+            editingSettings = false
+        }
+    }
+
+    private func deleteToken() {
+        if vm.deleteSyncToken() {
+            tokenDraft = ""
         }
     }
 }
