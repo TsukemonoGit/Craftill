@@ -23,17 +23,29 @@
 		products: SnapProduct[];
 	};
 	type StockDisplay = { label: string; soldOut: boolean; mode: SnapType['stock_mode'] };
+	type StockFilter = 'all' | 'in_stock' | 'sold_out';
 
 	const yenFormatter = new Intl.NumberFormat('ja-JP');
 	const skeletonItems = Array.from({ length: 8 }, (_, i) => i);
+	const RELOAD_COOLDOWN_MS = 60_000;
 
 	let snapshot = $state<Snapshot | null>(null);
 	let error = $state('');
 	let loading = $state(false);
 	let imageVersion = $state('');
 	let failedImages = $state<Record<string, boolean>>({});
+	let stockFilter = $state<StockFilter>('all');
+	let coolingDown = $state(false);
+	let cooldownTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const reloadDisabled = $derived(loading || coolingDown);
 
 	async function load() {
+		if (reloadDisabled) return;
+		coolingDown = true;
+		cooldownTimer = setTimeout(() => {
+			coolingDown = false;
+		}, RELOAD_COOLDOWN_MS);
 		loading = true;
 		error = '';
 		try {
@@ -62,6 +74,23 @@
 	onMount(() => {
 		load();
 		loadImageVersion();
+		return () => {
+			if (cooldownTimer) clearTimeout(cooldownTimer);
+		};
+	});
+
+	const typeById = $derived(new Map((snapshot?.types ?? []).map((t) => [t.type_id, t] as const)));
+
+	const filterCounts = $derived.by(() => {
+		let inStock = 0;
+		let soldOut = 0;
+		for (const p of snapshot?.products ?? []) {
+			const t = typeById.get(p.type_id);
+			if (!t) continue;
+			if (isSoldOut(t.stock_mode, p.stock)) soldOut++;
+			else inStock++;
+		}
+		return { all: inStock + soldOut, inStock, soldOut };
 	});
 
 	const groups = $derived(
@@ -70,7 +99,7 @@
 					.map((t) => ({
 						type: t,
 						products: snapshot!.products
-							.filter((p) => p.type_id === t.type_id)
+							.filter((p) => p.type_id === t.type_id && matchesStockFilter(t, p))
 							.sort((a, b) => a.product_id.localeCompare(b.product_id))
 					}))
 					.filter((g) => g.products.length > 0)
@@ -78,12 +107,30 @@
 	);
 
 	const totalCount = $derived(snapshot ? snapshot.products.length : 0);
+	const shownCount = $derived(groups.reduce((sum, g) => sum + g.products.length, 0));
 
 	const updatedAt = $derived(
 		snapshot
 			? new Date(snapshot.created_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
 			: ''
 	);
+
+	function isSoldOut(mode: SnapType['stock_mode'], stock: number | null | undefined): boolean {
+		if (mode === 'none') return false;
+		return (stock ?? 0) <= 0;
+	}
+
+	function matchesStockFilter(type: SnapType, product: SnapProduct): boolean {
+		if (stockFilter === 'all') return true;
+		const soldOut = isSoldOut(type.stock_mode, product.stock);
+		return stockFilter === 'sold_out' ? soldOut : !soldOut;
+	}
+
+	function filterButtonClass(value: StockFilter): string {
+		return value === stockFilter
+			? 'bg-stone-900 text-white shadow-sm'
+			: 'text-stone-600 hover:bg-stone-100';
+	}
 
 	function stockDisplay(
 		mode: SnapType['stock_mode'],
@@ -154,7 +201,7 @@
 				<button
 					type="button"
 					onclick={load}
-					disabled={loading}
+					disabled={reloadDisabled}
 					class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 shadow-sm transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
 				>
 					{loading ? '取得中…' : '再読み込み'}
@@ -168,14 +215,54 @@
 			送信が遅れている間、在庫表示が古い可能性があります。
 		</p>
 
+		{#if snapshot}
+			<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+				<div
+					class="inline-flex rounded-lg border border-stone-200 bg-white p-1 shadow-sm"
+					role="group"
+					aria-label="在庫で絞り込み"
+				>
+					<button
+						type="button"
+						aria-pressed={stockFilter === 'all'}
+						onclick={() => (stockFilter = 'all')}
+						class="rounded-md px-3 py-1.5 text-sm font-medium transition {filterButtonClass('all')}"
+					>
+						全体 <span class="ml-0.5 text-xs opacity-70">{filterCounts.all}</span>
+					</button>
+					<button
+						type="button"
+						aria-pressed={stockFilter === 'in_stock'}
+						onclick={() => (stockFilter = 'in_stock')}
+						class="rounded-md px-3 py-1.5 text-sm font-medium transition {filterButtonClass(
+							'in_stock'
+						)}"
+					>
+						在庫あり <span class="ml-0.5 text-xs opacity-70">{filterCounts.inStock}</span>
+					</button>
+					<button
+						type="button"
+						aria-pressed={stockFilter === 'sold_out'}
+						onclick={() => (stockFilter = 'sold_out')}
+						class="rounded-md px-3 py-1.5 text-sm font-medium transition {filterButtonClass(
+							'sold_out'
+						)}"
+					>
+						在庫なし <span class="ml-0.5 text-xs opacity-70">{filterCounts.soldOut}</span>
+					</button>
+				</div>
+				<p class="text-xs text-stone-500">{shownCount} 点を表示中</p>
+			</div>
+		{/if}
+
 		{#if error}
 			<div class="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
 				<p>{error}</p>
 				<button
 					type="button"
 					onclick={load}
-					disabled={loading}
-					class="mt-3 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-800 transition hover:bg-red-100 disabled:opacity-60"
+					disabled={reloadDisabled}
+					class="mt-3 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
 				>
 					再試行
 				</button>
@@ -198,8 +285,10 @@
 					</div>
 				{/each}
 			</div>
-		{:else if snapshot && groups.length === 0}
+		{:else if snapshot && snapshot.products.length === 0}
 			<p class="py-16 text-center text-sm text-stone-500">公開中の商品はありません。</p>
+		{:else if snapshot && groups.length === 0}
+			<p class="py-16 text-center text-sm text-stone-500">条件に一致する商品はありません。</p>
 		{:else}
 			<div class="space-y-10">
 				{#each groups as g (g.type.type_id)}
