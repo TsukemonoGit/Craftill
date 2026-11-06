@@ -1764,7 +1764,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         guard let url = URL(string: endpoint), url.scheme != nil else {
-            recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です: \(endpoint)")
+            recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です")
             return
         }
         guard isOnline else {

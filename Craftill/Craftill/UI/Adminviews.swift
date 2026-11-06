@@ -2180,15 +2180,31 @@ struct DataManagementView: View {
 struct SyncView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
+    @State private var editingSettings = false
+    @State private var endpointDraft = ""
+    @State private var tokenDraft = ""
 
     var body: some View {
         AdminShell("公開サイト送信") {
             VStack(alignment: .leading, spacing: 12) {
                 Panel(title: "送信先（A-14）") {
-                    LabeledField(label: "受信エンドポイント（例: https://…/api/snapshot）",
-                                 text: $vm.syncEndpoint, required: true)
-                    LabeledField(label: "認証トークン（Keychain に保存）", text: $vm.syncToken)
-                    Button("送信先を保存") { vm.saveSyncSettings() }.buttonStyle(.app)
+                    if editingSettings {
+                        LabeledField(label: "受信エンドポイント（例: https://…/api/snapshot）",
+                                     text: $endpointDraft, required: true)
+                        LabeledField(label: "認証トークン（変更する場合だけ入力）",
+                                     text: $tokenDraft, secure: true)
+                        Text(vm.syncToken.isEmpty ? "トークン: 未設定" : "トークン: 保存済み")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 8) {
+                            Button("保存") { saveSettings() }.buttonStyle(.appPrimary)
+                            Button("キャンセル") { editingSettings = false }.buttonStyle(.app)
+                        }
+                    } else {
+                        settingsSummaryRow("受信エンドポイント", value: maskedEndpoint)
+                        settingsSummaryRow("認証トークン", value: vm.syncToken.isEmpty ? "未設定" : "保存済み")
+                        Button("送信先を編集") { beginEditing() }.buttonStyle(.app)
+                    }
                 }
                 if compact {
                     VStack(spacing: 10) {
@@ -2216,5 +2232,45 @@ struct SyncView: View {
                     .font(.caption).foregroundColor(.secondary)
             }
         }
+    }
+
+    private var maskedEndpoint: String {
+        let endpoint = vm.syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        return endpoint.isEmpty ? "未設定" : "設定済み（••••）"
+    }
+
+    private func settingsSummaryRow(_ label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 120, alignment: .leading)
+            Text(value)
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func beginEditing() {
+        endpointDraft = vm.syncEndpoint
+        tokenDraft = ""
+        editingSettings = true
+    }
+
+    private func saveSettings() {
+        let endpoint = endpointDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else {
+            vm.message = "受信エンドポイントを入力してください"
+            return
+        }
+        vm.syncEndpoint = endpoint
+        let token = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            vm.syncToken = token
+        }
+        vm.saveSyncSettings()
+        editingSettings = false
     }
 }

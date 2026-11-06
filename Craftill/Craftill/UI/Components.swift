@@ -279,13 +279,20 @@ struct LabeledField: View {
     var required = false
     var disabled = false
     var placeholder = ""
+    var secure = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label + (required ? " *" : "")).font(.caption).foregroundColor(.secondary)
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.roundedBorder)
-                .disabled(disabled)
+            Group {
+                if secure {
+                    SecureField(placeholder, text: $text)
+                } else {
+                    TextField(placeholder, text: $text)
+                }
+            }
+            .textFieldStyle(.roundedBorder)
+            .disabled(disabled)
         }
     }
 }
