@@ -2183,6 +2183,7 @@ struct SyncView: View {
     @State private var editingSettings = false
     @State private var endpointDraft = ""
     @State private var tokenDraft = ""
+    @State private var confirmingDeleteToken = false
 
     var body: some View {
         AdminShell("公開サイト送信") {
@@ -2193,9 +2194,17 @@ struct SyncView: View {
                                      text: $endpointDraft, required: true)
                         LabeledField(label: "認証トークン（変更する場合だけ入力）",
                                      text: $tokenDraft, secure: true)
-                        Text(vm.syncToken.isEmpty ? "トークン: 未設定" : "トークン: 保存済み")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        HStack(spacing: 8) {
+                            Text(tokenStatusText)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer(minLength: 8)
+                            if !vm.syncToken.isEmpty {
+                                Button("トークンを削除") { confirmingDeleteToken = true }
+                                    .buttonStyle(.app)
+                                    .frame(width: 150)
+                            }
+                        }
                         HStack(spacing: 8) {
                             Button("保存") { saveSettings() }.buttonStyle(.appPrimary)
                             Button("キャンセル") { editingSettings = false }.buttonStyle(.app)
@@ -2232,11 +2241,24 @@ struct SyncView: View {
                     .font(.caption).foregroundColor(.secondary)
             }
         }
+        .alert("認証トークンを削除しますか？", isPresented: $confirmingDeleteToken) {
+            Button("削除", role: .destructive) { deleteToken() }
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            Text("保存済みの認証トークンを端末から削除します。")
+        }
     }
 
     private var maskedEndpoint: String {
         let endpoint = vm.syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         return endpoint.isEmpty ? "未設定" : "設定済み（••••）"
+    }
+
+    private var tokenStatusText: String {
+        if !tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "トークン: 入力あり（保存で確定）"
+        }
+        return vm.syncToken.isEmpty ? "トークン: 未設定" : "トークン: 保存済み"
     }
 
     private func settingsSummaryRow(_ label: String, value: String) -> some View {
@@ -2267,10 +2289,14 @@ struct SyncView: View {
         }
         vm.syncEndpoint = endpoint
         let token = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !token.isEmpty {
-            vm.syncToken = token
+        if vm.saveSyncSettings(newToken: token.isEmpty ? nil : token) {
+            editingSettings = false
         }
-        vm.saveSyncSettings()
-        editingSettings = false
+    }
+
+    private func deleteToken() {
+        if vm.deleteSyncToken() {
+            tokenDraft = ""
+        }
     }
 }

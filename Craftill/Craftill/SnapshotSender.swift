@@ -52,8 +52,11 @@ enum SyncTokenStore {
 
     @discardableResult
     static func save(_ token: String) -> Bool {
+        if token.isEmpty {
+            let status = SecItemDelete(baseQuery as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
         SecItemDelete(baseQuery as CFDictionary)
-        guard !token.isEmpty else { return true }
         var q = baseQuery
         q[kSecValueData as String] = Data(token.utf8)
         return SecItemAdd(q as CFDictionary, nil) == errSecSuccess

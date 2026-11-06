@@ -1741,16 +1741,32 @@ final class AppViewModel: ObservableObject {
 
     // MARK: 公開サイト送信（A-14）
 
-    func saveSyncSettings() {
+    @discardableResult
+    func saveSyncSettings(newToken: String? = nil) -> Bool {
         let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = syncToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = (newToken ?? syncToken).trimmingCharacters(in: .whitespacesAndNewlines)
         SyncSettings.endpoint = endpoint
         let tokenSaved = SyncSettings.saveToken(token)
         syncEndpoint = endpoint
-        syncToken = token
+        if tokenSaved {
+            syncToken = token
+        }
         message = tokenSaved
             ? "送信先を保存しました"
             : "送信先は保存しましたが、トークンを Keychain に保存できませんでした"
+        return tokenSaved
+    }
+
+    @discardableResult
+    func deleteSyncToken() -> Bool {
+        let deleted = SyncSettings.saveToken("")
+        if deleted {
+            syncToken = ""
+            message = "認証トークンを削除しました"
+        } else {
+            message = "認証トークンを削除できませんでした"
+        }
+        return deleted
     }
 
     /// 実際にスナップショットを送信する。成功ログは HTTP 2xx のときだけ残す。
