@@ -40,11 +40,20 @@
 
 	const reloadDisabled = $derived(loading || coolingDown);
 
+	function endCooldown() {
+		if (cooldownTimer) {
+			clearTimeout(cooldownTimer);
+			cooldownTimer = undefined;
+		}
+		coolingDown = false;
+	}
+
 	async function load() {
 		if (reloadDisabled) return;
 		coolingDown = true;
 		cooldownTimer = setTimeout(() => {
 			coolingDown = false;
+			cooldownTimer = undefined;
 		}, RELOAD_COOLDOWN_MS);
 		loading = true;
 		error = '';
@@ -55,6 +64,7 @@
 			failedImages = {};
 		} catch (e) {
 			error = `取得に失敗しました: ${e instanceof Error ? e.message : String(e)}`;
+			endCooldown();
 		} finally {
 			loading = false;
 		}
