@@ -1742,19 +1742,21 @@ final class AppViewModel: ObservableObject {
     // MARK: 公開サイト送信（A-14）
 
     @discardableResult
-    func saveSyncSettings(newToken: String? = nil) -> Bool {
-        let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        let token = (newToken ?? syncToken).trimmingCharacters(in: .whitespacesAndNewlines)
-        SyncSettings.endpoint = endpoint
-        let tokenSaved = SyncSettings.saveToken(token)
-        syncEndpoint = endpoint
-        if tokenSaved {
+    func saveSyncSettings(endpoint newEndpoint: String? = nil,
+                          newToken: String? = nil) -> Bool {
+        let endpoint = (newEndpoint ?? syncEndpoint).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let newToken {
+            let token = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard SyncSettings.saveToken(token) else {
+                message = "トークンを Keychain に保存できませんでした。送信先は変更していません"
+                return false
+            }
             syncToken = token
         }
-        message = tokenSaved
-            ? "送信先を保存しました"
-            : "送信先は保存しましたが、トークンを Keychain に保存できませんでした"
-        return tokenSaved
+        SyncSettings.endpoint = endpoint
+        syncEndpoint = endpoint
+        message = "送信先を保存しました"
+        return true
     }
 
     @discardableResult

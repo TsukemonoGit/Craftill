@@ -2221,6 +2221,7 @@ struct SyncView: View {
                         Button("公開サイトへ送信") { vm.sendSnapshot() }
                             .buttonStyle(.appPrimary)
                             .frame(maxWidth: .infinity, minHeight: 52)
+                            .disabled(editingSettings)
                         InfoBox(text: "画像の版識別子: \(ImageBuildInfo.version)（\(ImageBuildInfo.imageCount)件）", size: 12, bold: false)
                     }
                 } else {
@@ -2229,6 +2230,7 @@ struct SyncView: View {
                         Button("公開サイトへ送信") { vm.sendSnapshot() }
                             .buttonStyle(.appPrimary)
                             .frame(maxWidth: 280, minHeight: 52)
+                            .disabled(editingSettings)
                         InfoBox(text: "画像の版識別子: \(ImageBuildInfo.version)（\(ImageBuildInfo.imageCount)件）", size: 12, bold: false)
                     }
                 }
@@ -2287,9 +2289,8 @@ struct SyncView: View {
             vm.message = "受信エンドポイントを入力してください"
             return
         }
-        vm.syncEndpoint = endpoint
         let token = tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if vm.saveSyncSettings(newToken: token.isEmpty ? nil : token) {
+        if vm.saveSyncSettings(endpoint: endpoint, newToken: token.isEmpty ? nil : token) {
             editingSettings = false
         }
     }
