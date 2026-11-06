@@ -451,7 +451,10 @@ struct GroupEditor: View {
     var body: some View {
         AdaptiveColumns(spacing: 16) {
             Panel(title: "グループ一覧") {
-                TableRowView(cells: ["グループID", "ラベル", "使用状況"], widths: [120, 180, 90], header: true)
+                TableRowView(cells: ["グループID", "ラベル", "使用状況"],
+                             widths: [120, 180, 90],
+                             header: true,
+                             actionWidth: compact ? 0 : 200)
                 ForEach(vm.groups) { g in
                     groupRow(g)
                 }
@@ -476,21 +479,22 @@ struct GroupEditor: View {
 
     @ViewBuilder
     private func groupRow(_ g: ProductGroup) -> some View {
-        let table = TableRowView(cells: [g.groupId, g.label, vm.isGroupInUse(g.groupId) ? "使用中" : "未使用"],
-                                 widths: [120, 180, 90])
+        let cells = [g.groupId, g.label, vm.isGroupInUse(g.groupId) ? "使用中" : "未使用"]
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                table
-                HStack(spacing: 6) {
+                TableRowView(cells: cells, widths: [120, 180, 90])
+                HStack(spacing: 8) {
                     editButton(g)
                     deleteButton(g)
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            HStack(spacing: 6) {
-                table
-                editButton(g)
-                deleteButton(g)
+            TableRowView(cells: cells, widths: [120, 180, 90], actionWidth: 200) {
+                HStack(spacing: 8) {
+                    editButton(g)
+                    deleteButton(g)
+                }
             }
         }
     }
@@ -502,13 +506,13 @@ struct GroupEditor: View {
             editing = true
         }
         .buttonStyle(.app)
-        .frame(minWidth: 80, maxWidth: 120)
+        .frame(width: 104)
     }
 
     private func deleteButton(_ g: ProductGroup) -> some View {
         Button("削除") { vm.deleteGroup(g.groupId) }
             .buttonStyle(.app)
-            .frame(minWidth: 60, maxWidth: 80)
+            .frame(width: 80)
             .disabled(vm.isGroupInUse(g.groupId))
     }
 
@@ -567,7 +571,9 @@ struct TypeEditor: View {
             Panel(title: "種類一覧") {
                 FieldHelp("行の「編集」で内容をフォームに読み込みます。種類を追加すると、その種類の商品を登録できるようになります。")
                 TableRowView(cells: ["種類ID", "表示名", "接頭辞", "桁", "在庫の扱い", "グループ", "next_no"],
-                             widths: [90, 140, 60, 40, 110, 110, 70], header: true)
+                             widths: [90, 140, 60, 40, 110, 110, 70],
+                             header: true,
+                             actionWidth: compact ? 0 : 88)
                 ForEach(vm.types) { t in
                     typeRow(t)
                 }
@@ -625,23 +631,25 @@ struct TypeEditor: View {
 
     @ViewBuilder
     private func typeRow(_ t: ProductType) -> some View {
-        let table = TableRowView(cells: [t.typeId, t.name, t.idPrefix, "\(t.idDigits)", t.stockMode.label,
-                                         vm.groupLabel(t.groupId), "\(t.nextNo)"],
-                                 widths: [90, 140, 60, 40, 110, 110, 70])
-        let button = Button("編集") { load(t) }
-            .buttonStyle(.app)
-            .frame(minWidth: 52, maxWidth: 80)
+        let cells = [t.typeId, t.name, t.idPrefix, "\(t.idDigits)", t.stockMode.label,
+                     vm.groupLabel(t.groupId), "\(t.nextNo)"]
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                table
-                button
+                TableRowView(cells: cells, widths: [90, 140, 60, 40, 110, 110, 70])
+                editButton(t)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            HStack(spacing: 6) {
-                table
-                button
+            TableRowView(cells: cells, widths: [90, 140, 60, 40, 110, 110, 70], actionWidth: 88) {
+                editButton(t)
             }
         }
+    }
+
+    private func editButton(_ t: ProductType) -> some View {
+        Button("編集") { load(t) }
+            .buttonStyle(.app)
+            .frame(width: 80)
     }
 
     private func load(_ t: ProductType) {
@@ -926,7 +934,9 @@ struct ProductEditor: View {
                     .padding(.vertical, 8)
             } else {
                 TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開", "写真"],
-                             widths: [65, 115, 140, 55, 55, 45, 45, 40], header: true)
+                             widths: [65, 115, 140, 55, 55, 45, 45, 40],
+                             header: true,
+                             actionWidth: compact ? 0 : 88)
                 ForEach(filteredInventory) { p in
                     productRow(p)
                 }
@@ -945,26 +955,28 @@ struct ProductEditor: View {
 
     @ViewBuilder
     private func productRow(_ p: Product) -> some View {
-        let table = TableRowView(cells: [p.id, vm.typeName(p.typeId), p.name, "\(p.priceJpy)",
-                                         p.priceSats.map { "\($0)" } ?? "",
-                                         p.stock.map { "\($0)" } ?? "―",
-                                         p.isPublic ? "1" : "0",
-                                         p.hasDisplayImage ? "✓" : "―"],
-                                 widths: [65, 115, 140, 55, 55, 45, 45, 40])
-        let button = Button("編集") { load(p) }
-            .buttonStyle(.app)
-            .frame(minWidth: 52, maxWidth: 80)
+        let cells = [p.id, vm.typeName(p.typeId), p.name, "\(p.priceJpy)",
+                     p.priceSats.map { "\($0)" } ?? "",
+                     p.stock.map { "\($0)" } ?? "―",
+                     p.isPublic ? "1" : "0",
+                     p.hasDisplayImage ? "✓" : "―"]
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                table
-                button
+                TableRowView(cells: cells, widths: [65, 115, 140, 55, 55, 45, 45, 40])
+                editButton(p)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            HStack(spacing: 6) {
-                table
-                button
+            TableRowView(cells: cells, widths: [65, 115, 140, 55, 55, 45, 45, 40], actionWidth: 88) {
+                editButton(p)
             }
         }
+    }
+
+    private func editButton(_ p: Product) -> some View {
+        Button("編集") { load(p) }
+            .buttonStyle(.app)
+            .frame(width: 80)
     }
 
     // MARK: フォーム
@@ -1883,7 +1895,9 @@ struct SalesHistoryView: View {
         AdminShell("販売履歴") {
             VStack(alignment: .leading, spacing: 10) {
                 TableRowView(cells: ["販売ID", "状態", "方法", "円", "sats", "完了 / 確認時刻", "返金済み"],
-                             widths: [170, 90, 100, 80, 90, 170, 80], header: true)
+                             widths: [170, 90, 100, 80, 90, 170, 80],
+                             header: true,
+                             actionWidth: compact ? 0 : 300)
                 if vm.sales.isEmpty { Text("記録なし").foregroundColor(.secondary) }
                 ForEach(vm.sales.reversed()) { s in
                     saleRow(s)
@@ -1896,49 +1910,40 @@ struct SalesHistoryView: View {
 
     @ViewBuilder
     private func saleRow(_ s: Sale) -> some View {
-        let table = TableRowView(cells: [s.id, s.status.rawValue, s.method.rawValue,
-                                         s.totalJpy.map { Fmt.num($0) } ?? "―",
-                                         s.totalSats.map { Fmt.num($0) } ?? "―",
-                                         s.completedAt == nil ? "確認 " + Fmt.time(s.confirmedAt) + "（中断）" : Fmt.time(s.completedAt),
-                                         s.refunded ? "済" : "―"],
-                                 widths: [170, 90, 100, 80, 90, 170, 80])
-        let buttons = VStack(spacing: 6) {
+        let cells = [s.id, s.status.rawValue, s.method.rawValue,
+                     s.totalJpy.map { Fmt.num($0) } ?? "―",
+                     s.totalSats.map { Fmt.num($0) } ?? "―",
+                     s.completedAt == nil ? "確認 " + Fmt.time(s.confirmedAt) + "（中断）" : Fmt.time(s.completedAt),
+                     s.refunded ? "済" : "―"]
+        if compact {
+            VStack(alignment: .leading, spacing: 6) {
+                TableRowView(cells: cells, widths: [170, 90, 100, 80, 90, 170, 80])
+                actionButtons(s)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        } else {
+            TableRowView(cells: cells, widths: [170, 90, 100, 80, 90, 170, 80], actionWidth: 300) {
+                actionButtons(s)
+            }
+        }
+    }
+
+    private func actionButtons(_ s: Sale) -> some View {
+        HStack(spacing: 8) {
             Button("取消（PIN）") {
                 vm.dialogPin = ""
                 vm.dialog = .voidSale(s.id)
             }
             .buttonStyle(.app)
+            .frame(width: 120)
             .disabled(s.status != .completed)
+
             Button("返金済み設定（PIN）") {
                 vm.requirePinWithValue("返金済み設定") { entered in vm.toggleRefunded(s.id, pin: entered) }
             }
             .buttonStyle(.app)
+            .frame(width: 170)
             .disabled(s.status != .voided || s.totalSats == nil)
-        }
-        if compact {
-            VStack(alignment: .leading, spacing: 6) {
-                table
-                buttons
-            }
-        } else {
-            HStack(spacing: 6) {
-                table
-                VStack(spacing: 6) {
-                    Button("取消（PIN）") {
-                        vm.dialogPin = ""
-                        vm.dialog = .voidSale(s.id)
-                    }
-                    .buttonStyle(.app).frame(minWidth: 90, maxWidth: 130)
-                    .disabled(s.status != .completed)
-                }
-                VStack(spacing: 6) {
-                    Button("返金済み設定（PIN）") {
-                        vm.requirePinWithValue("返金済み設定") { entered in vm.toggleRefunded(s.id, pin: entered) }
-                    }
-                    .buttonStyle(.app).frame(minWidth: 120, maxWidth: 180)
-                    .disabled(s.status != .voided || s.totalSats == nil)
-                }
-            }
         }
     }
 }

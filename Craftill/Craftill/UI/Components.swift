@@ -307,13 +307,27 @@ struct FieldHelp: View {
     }
 }
 
-struct TableRowView: View {
+struct TableRowView<Actions: View>: View {
     let cells: [String]
     let widths: [CGFloat]
     var header = false
+    var actionWidth: CGFloat = 0
+    let actions: Actions
+
+    init(cells: [String],
+         widths: [CGFloat],
+         header: Bool = false,
+         actionWidth: CGFloat = 0,
+         @ViewBuilder actions: () -> Actions) {
+        self.cells = cells
+        self.widths = widths
+        self.header = header
+        self.actionWidth = actionWidth
+        self.actions = actions()
+    }
 
     var body: some View {
-        TableRowLayout(weights: widths) {
+        TableRowLayout(weights: widths, actionWidth: actionWidth) {
             ForEach(Array(cells.enumerated()), id: \.offset) { _, c in
                 Text(c)
                     .font(.system(size: 12, weight: header ? .bold : .regular))
@@ -324,41 +338,81 @@ struct TableRowView: View {
                     .padding(.vertical, 6)
                     .overlay(Rectangle().stroke(Color.gray.opacity(0.3)))
             }
+            if actionWidth > 0 {
+                if header {
+                    Color.clear
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    actions
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                }
+            }
         }
         .background(header ? Color.gray.opacity(0.15) : Color.clear)
     }
 }
 
-/// 列幅を「比率」として扱う。画面幅が変わっても表がはみ出さない。
+extension TableRowView where Actions == EmptyView {
+    init(cells: [String],
+         widths: [CGFloat],
+         header: Bool = false,
+         actionWidth: CGFloat = 0) {
+        self.init(cells: cells, widths: widths, header: header, actionWidth: actionWidth) {
+            EmptyView()
+        }
+    }
+}
+
+/// データ列は「比率」、右端の操作列だけ固定幅で扱う。
+/// 画面幅が変わっても表がはみ出さず、ヘッダーとデータ行の縦線も揃う。
 private struct TableRowLayout: Layout {
     let weights: [CGFloat]
+    var actionWidth: CGFloat = 0
     var spacing: CGFloat = 0
 
-    private func columnWidths(total: CGFloat) -> [CGFloat] {
-        let valid = weights.isEmpty ? [1] : weights.map { max(0.01, $0) }
+    private func columnWidths(total: CGFloat, dataCount: Int) -> [CGFloat] {
+        let available = max(0, total - actionWidth)
+        let valid: [CGFloat]
+        if weights.isEmpty {
+            valid = Array(repeating: 1, count: max(1, dataCount))
+        } else {
+            valid = weights.map { max(0.01, $0) }
+        }
         let sum = valid.reduce(0, +)
-        return valid.map { total * $0 / sum }
+        return valid.map { available * $0 / sum }
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? 0
-        let widths = columnWidths(total: width)
+        let dataCount = actionWidth > 0 ? max(0, subviews.count - 1) : subviews.count
+        let widths = columnWidths(total: width, dataCount: dataCount)
         var height: CGFloat = 0
         for (i, subview) in subviews.enumerated() {
-            let w = widths.indices.contains(i) ? widths[i] : 0
+            let w: CGFloat
+            if actionWidth > 0, i == subviews.count - 1 {
+                w = actionWidth
+            } else {
+                w = widths.indices.contains(i) ? widths[i] : 0
+            }
             height = max(height, subview.sizeThatFits(ProposedViewSize(width: w, height: nil)).height)
         }
         return CGSize(width: width, height: height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let widths = columnWidths(total: bounds.width)
+        let dataCount = actionWidth > 0 ? max(0, subviews.count - 1) : subviews.count
+        let widths = columnWidths(total: bounds.width, dataCount: dataCount)
         var x = bounds.minX
         for (i, subview) in subviews.enumerated() {
-            let w = widths.indices.contains(i) ? widths[i] : 0
-            subview.place(at: CGPoint(x: x, y: bounds.minY),
-                          proposal: ProposedViewSize(width: w, height: bounds.height))
-            x += w + spacing
+            if actionWidth > 0, i == subviews.count - 1 {
+                subview.place(at: CGPoint(x: bounds.maxX - actionWidth, y: bounds.minY),
+                              proposal: ProposedViewSize(width: actionWidth, height: bounds.height))
+            } else {
+                let w = widths.indices.contains(i) ? widths[i] : 0
+                subview.place(at: CGPoint(x: x, y: bounds.minY),
+                              proposal: ProposedViewSize(width: w, height: bounds.height))
+                x += w + spacing
+            }
         }
     }
 }

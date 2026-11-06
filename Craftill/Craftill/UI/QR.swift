@@ -130,6 +130,7 @@ struct QRLabelView: View {
                     sizeControls
                     nameToggle
                     actionButtons
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             } else {
                 HStack(alignment: .center, spacing: 12) {
@@ -199,20 +200,10 @@ struct QRLabelView: View {
     private var listPanel: some View {
         Panel(title: "商品一覧（追加元）") {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Stepper(value: $vm.qrPendingCopies, in: 1...999) {
-                        Text("追加枚数: \(vm.qrPendingCopies)")
-                    }
-                    Spacer(minLength: 8)
-                    Button("絞り込み結果を各1枚追加") {
-                        vm.addManyToQRQueue(productIds: filteredProducts.map(\.id), copies: 1)
-                    }
-                    .buttonStyle(.app)
-                    Button("絞り込み結果を各\(vm.qrPendingCopies)枚追加") {
-                        vm.addManyToQRQueue(productIds: filteredProducts.map(\.id), copies: vm.qrPendingCopies)
-                    }
-                    .buttonStyle(.app)
+                Stepper(value: $vm.qrPendingCopies, in: 1...999) {
+                    Text("各商品に追加する枚数: \(vm.qrPendingCopies)")
                 }
+                bulkAddButtons
                 if filteredProducts.isEmpty {
                     Text("条件に合う商品がありません。")
                         .font(.callout)
@@ -233,6 +224,44 @@ struct QRLabelView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// 一括追加も右端を「各1枚」で固定し、2枚以上のときだけ左に「各N枚」を出す。
+    private var bulkAddButtons: some View {
+        Group {
+            if compact {
+                VStack(alignment: .trailing, spacing: 8) {
+                    if vm.qrPendingCopies > 1 {
+                        bulkAddNButton
+                    }
+                    bulkAddOneButton
+                }
+            } else {
+                HStack(spacing: 8) {
+                    if vm.qrPendingCopies > 1 {
+                        bulkAddNButton
+                    }
+                    bulkAddOneButton
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var bulkAddNButton: some View {
+        Button("一覧に各\(vm.qrPendingCopies)枚追加") {
+            vm.addManyToQRQueue(productIds: filteredProducts.map(\.id), copies: vm.qrPendingCopies)
+        }
+        .buttonStyle(.app)
+        .frame(width: 160)
+    }
+
+    private var bulkAddOneButton: some View {
+        Button("一覧に各1枚追加") {
+            vm.addManyToQRQueue(productIds: filteredProducts.map(\.id), copies: 1)
+        }
+        .buttonStyle(.appPrimary)
+        .frame(width: 160)
+    }
+
     private func productRow(_ product: Product) -> some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
@@ -246,16 +275,23 @@ struct QRLabelView: View {
                     .foregroundColor(.secondary)
             }
             Spacer(minLength: 8)
-            Button("+1") { vm.addToQRQueue(productId: product.id, copies: 1) }
-                .buttonStyle(.app)
-            Button("+\(vm.qrPendingCopies)") {
-                vm.addToQRQueue(productId: product.id, copies: vm.qrPendingCopies)
+            if vm.qrPendingCopies > 1 {
+                addButton(product, copies: vm.qrPendingCopies)
             }
-            .buttonStyle(.appPrimary)
+            addButton(product, copies: 1)
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.06)))
+    }
+
+    /// 右端は常に「+1枚」。既定枚数が2以上なら、その左に「+N枚」を並べる。
+    private func addButton(_ product: Product, copies: Int) -> some View {
+        Button("+\(copies)枚") {
+            vm.addToQRQueue(productId: product.id, copies: copies)
+        }
+        .buttonStyle(AppButtonStyle(primary: copies == 1))
+        .frame(width: copies == 1 ? 64 : 84)
     }
 
     private var queuePanel: some View {
@@ -309,8 +345,10 @@ struct QRLabelView: View {
                 Text("\(item.copies)枚")
                     .font(.caption)
             }
+            .frame(width: 110, alignment: .trailing)
             Button("削除") { vm.removeFromQRQueue(productId: item.productId) }
                 .buttonStyle(.app)
+                .frame(width: 72)
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
@@ -360,23 +398,28 @@ struct QRLabelView: View {
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.green.opacity(0.4)))
     }
 
-    @ViewBuilder
     private var actionButtons: some View {
-        #if canImport(AppKit)
-        Button("PNGで保存") { savePNG() }
-            .buttonStyle(.app)
-            .disabled(!canRasterExport)
-        Button("印刷") { printLabels() }
-            .buttonStyle(.appPrimary)
-            .disabled(queueTargets.isEmpty)
-        #elseif canImport(UIKit)
-        Button("共有") { sharePNG() }
-            .buttonStyle(.app)
-            .disabled(!canRasterExport)
-        Button("印刷") { printLabels() }
-            .buttonStyle(.appPrimary)
-            .disabled(queueTargets.isEmpty)
-        #endif
+        HStack(spacing: 8) {
+            #if canImport(AppKit)
+            Button("PNGで保存") { savePNG() }
+                .buttonStyle(.app)
+                .frame(width: 120)
+                .disabled(!canRasterExport)
+            Button("印刷") { printLabels() }
+                .buttonStyle(.appPrimary)
+                .frame(width: 90)
+                .disabled(queueTargets.isEmpty)
+            #elseif canImport(UIKit)
+            Button("共有") { sharePNG() }
+                .buttonStyle(.app)
+                .frame(width: 90)
+                .disabled(!canRasterExport)
+            Button("印刷") { printLabels() }
+                .buttonStyle(.appPrimary)
+                .frame(width: 90)
+                .disabled(queueTargets.isEmpty)
+            #endif
+        }
     }
 
     private func setupOnAppear() {
