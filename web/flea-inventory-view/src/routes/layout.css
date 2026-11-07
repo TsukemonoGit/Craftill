@@ -1,2 +1,50 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
+
+@theme {
+	--color-lemon: #ffe63b;
+	--color-lemon-deep: #f2ce00;
+	--color-lemon-soft: #fff3a8;
+	--color-paper: #fffdf6;
+	--color-ink: #131313;
+
+	--font-display: 'Mochiy Pop One', 'Zen Maru Gothic', sans-serif;
+	--font-round: 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN', sans-serif;
+	--font-hand: 'Yusei Magic', 'Zen Maru Gothic', cursive;
+	--font-latin: 'Baloo 2', 'Zen Maru Gothic', sans-serif;
+}
+
+body {
+	background-color: var(--color-lemon);
+}
+
+/* 黒地の帯を流れるマーキー。半分の幅ぶん動かすと継ぎ目なくループする。 */
+@media (prefers-reduced-motion: no-preference) {
+	.marquee-track {
+		animation: marquee 32s linear infinite;
+	}
+
+	.marquee-track:hover {
+		animation-play-state: paused;
+	}
+}
+
+@keyframes marquee {
+	from {
+		transform: translateX(0);
+	}
+	to {
+		transform: translateX(-50%);
+	}
+}
+
+/* 黄色い背景にうっすら乗せるドット方眼 */
+.dot-grid {
+	background-image: radial-gradient(circle, rgb(19 19 19 / 0.16) 1px, transparent 1px);
+	background-size: 16px 16px;
+}
+
+/* 手書き風のスタンプ回転 */
+.stamp-rotate {
+	transform: rotate(-10deg);
+}
