@@ -312,26 +312,6 @@
 								それはそれとして、ロクヨウさんの製品も売ります。
 							</p>
 						</div>
-
-						{#if snapshot}
-							<div class="mt-5 flex flex-wrap items-center gap-2">
-								<span
-									class="rounded-full border-2 border-ink bg-ink px-3 py-1 text-[11px] font-bold text-lemon"
-								>
-									ぜんぶ {totalCount} 点
-								</span>
-								<span
-									class="rounded-full border-2 border-ink bg-paper px-3 py-1 text-[11px] font-bold"
-								>
-									まだある {filterCounts.inStock} 点
-								</span>
-								<span
-									class="rounded-full border-2 border-dashed border-ink/40 px-3 py-1 text-[11px] font-bold text-ink/60"
-								>
-									もうない {filterCounts.soldOut} 点
-								</span>
-							</div>
-						{/if}
 					</div>
 
 					<!-- 右：イベント情報と支払い -->
