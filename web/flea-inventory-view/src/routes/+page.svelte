@@ -318,7 +318,7 @@
 											? 'opacity-80'
 											: ''}"
 									>
-										<div class="relative aspect-auto overflow-hidden bg-stone-100">
+						<div class="relative aspect-[3/4] overflow-hidden bg-stone-100">
 											{#if showImage(p)}
 												<img
 													src={imageUrl(p.product_id)}
