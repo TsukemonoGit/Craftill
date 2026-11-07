@@ -719,6 +719,7 @@ struct ProductEditor: View {
     @State private var removeImage = false
     @State private var searchText = ""
     @State private var filterTypeId = ""
+    @State private var showSatsBulk = false
 
     init(onOpenTypes: (() -> Void)? = nil) {
         self.onOpenTypes = onOpenTypes
@@ -885,6 +886,16 @@ struct ProductEditor: View {
                 vm.go(.qrLabels)
             }
         }
+        .sheet(isPresented: $showSatsBulk) {
+            SatsBulkPriceSheet(initialTypeId: typeId) { changed in
+                // 編集中の商品が一括設定の対象なら、フォームのsats欄も新しい値にする。
+                // 古い値のまま「更新」を押して、一括設定を上書きしないため。
+                guard let id = editingId,
+                      let updated = changed.first(where: { $0.id == id }) else { return }
+                satsText = updated.priceSats.map { "\($0)" } ?? ""
+            }
+            .environmentObject(vm)
+        }
     }
 
     // MARK: 一覧
@@ -943,11 +954,15 @@ struct ProductEditor: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)],
                       alignment: .leading, spacing: 8) {
+                Button("sats価格を一括設定") { showSatsBulk = true }
+                    .buttonStyle(.app)
+                    .disabled(vm.inventory.isEmpty)
                 Button("CSV取り込み") { vm.go(.csvImport) }.buttonStyle(.app)
                 Button("CSV書き出し") { vm.exportMaster() }.buttonStyle(.app)
                 Button("価格一覧CSV") { vm.go(.priceList) }.buttonStyle(.app)
                 Button("画像なしID一覧") { vm.go(.priceList) }.buttonStyle(.app)
             }
+            FieldHelp("「sats価格を一括設定」は、円価格ごとにsats価格をまとめて変更します。空欄の行は変更しません。")
             Text("既存商品の編集可: 名前・円価格・sats価格・属性・公開状態。変更不可: 商品ID・種類。在庫は手動在庫調整。商品の削除なし（非公開・在庫0で代替）。")
                 .font(.caption).foregroundColor(.secondary)
         }
@@ -1392,6 +1407,280 @@ struct ProductEditor: View {
         stockText = "0"
         isPublic = true
         if !keepType { typeId = vm.types.first?.typeId ?? "" }
+    }
+}
+
+// MARK: - sats価格の一括設定
+
+/// 円価格ごとにsats価格をまとめて設定するシート。
+/// 例: 100円の商品を1000sats、300円の商品を4000satsに一括で変更する。
+/// 空欄の行は変更しない。適用はVM側で1トランザクション（P-02）。
+struct SatsBulkPriceSheet: View {
+    @EnvironmentObject var vm: AppViewModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.isCompactWidth) private var compact
+
+    let initialTypeId: String
+    let onApplied: ([Product]) -> Void
+
+    @State private var typeId: String
+    @State private var satsTexts: [Int: String] = [:]
+    @State private var error: String? = nil
+
+    init(initialTypeId: String, onApplied: @escaping ([Product]) -> Void) {
+        self.initialTypeId = initialTypeId
+        self.onApplied = onApplied
+        _typeId = State(initialValue: initialTypeId)
+    }
+
+    private var scopedProducts: [Product] {
+        vm.inventory.filter { typeId.isEmpty || $0.typeId == typeId }
+    }
+
+    private var priceTiers: [Int] {
+        Array(Set(scopedProducts.map(\.priceJpy))).sorted()
+    }
+
+    private var assignments: [Int: Int] {
+        var out: [Int: Int] = [:]
+        for (price, text) in satsTexts {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, let sats = Int(trimmed), sats >= 1 else { continue }
+            out[price] = sats
+        }
+        return out
+    }
+
+    private var invalidPrices: [Int] {
+        satsTexts.compactMap { price, text in
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            guard let sats = Int(trimmed), sats >= 1 else { return price }
+            return nil
+        }
+        .sorted()
+    }
+
+    private var changes: [SatsPriceChange] {
+        vm.previewSatsPriceBulk(assignments: assignments,
+                                typeId: typeId.isEmpty ? nil : typeId)
+    }
+
+    private var canApply: Bool {
+        invalidPrices.isEmpty && !changes.isEmpty && vm.saleState == .idle
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    scopePicker
+                    if priceTiers.isEmpty {
+                        Text("対象の商品がありません。")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    } else {
+                        priceTable
+                    }
+                    if !invalidPrices.isEmpty {
+                        Text("sats価格は1以上の整数で入力してください（\(invalidPrices.map { "\($0)円" }.joined(separator: " / "))）。")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    preview
+                    if let error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            footer
+        }
+        .padding(20)
+        .frame(minWidth: 300, idealWidth: 680, maxWidth: 820,
+               minHeight: 400, idealHeight: 680, maxHeight: 820)
+        .onChange(of: typeId) { _, _ in
+            // 種類を変えたら、前の種類で入力した値を残さない（同じ円価格の別種類へ誤適用しない）。
+            satsTexts = [:]
+            error = nil
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("sats価格を一括設定").font(.title3.bold())
+                Text("円価格ごとにsats価格をまとめて設定します。空欄の行は変更しません。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button("閉じる") { dismiss() }.buttonStyle(.app)
+        }
+    }
+
+    private var scopePicker: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("対象の種類").font(.caption).foregroundColor(.secondary)
+            Picker("", selection: $typeId) {
+                Text("すべての種類").tag("")
+                ForEach(vm.types) { t in
+                    Text(vm.tabLabel(t)).tag(t.typeId)
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: compact ? .infinity : 320)
+        }
+    }
+
+    @ViewBuilder
+    private var priceTable: some View {
+        if compact {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(priceTiers, id: \.self) { price in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(Fmt.yen(price)).font(.callout.bold())
+                            Text("\(products(at: price).count)件")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer(minLength: 0)
+                        }
+                        Text("現在: \(currentSatsSummary(at: price))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextField("変更しない", text: binding(for: price))
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.gray.opacity(0.06)))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.18)))
+                }
+            }
+        } else {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                GridRow {
+                    tableHeader("円価格")
+                    tableHeader("件数")
+                    tableHeader("現在のsats")
+                    tableHeader("新しいsats")
+                }
+                ForEach(priceTiers, id: \.self) { price in
+                    GridRow {
+                        Text(Fmt.yen(price)).font(.callout)
+                        Text("\(products(at: price).count)件").font(.callout)
+                        Text(currentSatsSummary(at: price)).font(.callout)
+                        TextField("変更しない", text: binding(for: price))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 140)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var preview: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("更新内容").font(.headline)
+                Spacer(minLength: 8)
+                Text(changes.isEmpty ? "変更なし" : "\(changes.count)件")
+                    .font(.callout.bold())
+                    .foregroundColor(changes.isEmpty ? .secondary : .orange)
+            }
+            if changes.isEmpty {
+                Text(satsTexts.isEmpty
+                     ? "sats価格を入力すると、更新内容がここに表示されます。"
+                     : "入力したsats価格が現在値と同じか、対象の商品がありません。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(changes.prefix(50)) { change in
+                        HStack(spacing: 8) {
+                            Text(change.product.id)
+                                .font(.system(.caption, design: .monospaced))
+                            Text(change.product.name)
+                                .font(.caption)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text("\(change.oldSats.map { Fmt.sats($0) } ?? "空欄") → \(Fmt.sats(change.newSats))")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                    if changes.count > 50 {
+                        Text("他 \(changes.count - 50)件")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Button("キャンセル") { dismiss() }.buttonStyle(.app)
+            Spacer(minLength: 8)
+            if vm.saleState != .idle {
+                Text("会計中は変更できません")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+            Button(changes.isEmpty ? "更新" : "\(changes.count)件を更新") { apply() }
+                .buttonStyle(.appPrimary)
+                .disabled(!canApply)
+        }
+    }
+
+    private func products(at price: Int) -> [Product] {
+        scopedProducts.filter { $0.priceJpy == price }
+    }
+
+    private func currentSatsSummary(at price: Int) -> String {
+        let items = products(at: price)
+        let values = Set(items.compactMap(\.priceSats)).sorted()
+        let hasEmpty = items.contains { $0.priceSats == nil }
+        if values.isEmpty { return "空欄" }
+        let parts = values.prefix(3).map { Fmt.sats($0) } + (hasEmpty ? ["空欄"] : [])
+        if values.count > 3 || parts.count > 3 { return "混在" }
+        if parts.count == 1 { return parts[0] }
+        return "混在（\(parts.joined(separator: " / "))）"
+    }
+
+    private func binding(for price: Int) -> Binding<String> {
+        Binding(
+            get: { satsTexts[price] ?? "" },
+            set: { satsTexts[price] = $0 }
+        )
+    }
+
+    private func tableHeader(_ text: String) -> some View {
+        Text(text).font(.caption.bold()).foregroundColor(.secondary)
+    }
+
+    private func apply() {
+        error = nil
+        let planned = changes
+        guard !planned.isEmpty else {
+            error = "変更はありません"
+            return
+        }
+        if let message = vm.applySatsPriceBulk(assignments: assignments,
+                                               typeId: typeId.isEmpty ? nil : typeId) {
+            error = message
+            return
+        }
+        let ids = Set(planned.map(\.product.id))
+        onApplied(vm.inventory.filter { ids.contains($0.id) })
+        dismiss()
     }
 }
 

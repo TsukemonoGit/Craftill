@@ -1449,6 +1449,55 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    // MARK: sats価格の一括設定
+
+    /// 円価格ごとのsats価格一括設定のプレビュー。DBもメモリも変更しない。
+    func previewSatsPriceBulk(assignments: [Int: Int], typeId: String?) -> [SatsPriceChange] {
+        satsPriceChanges(assignments, typeId: typeId, in: inventory)
+    }
+
+    /// 円価格ごとにsats価格を一括設定する。
+    /// - 待機中のみ、PIN検証済みのみ（A-1、A-11）。
+    /// - 変更した商品だけを1トランザクションで保存し、成功後だけメモリへ反映する（P-02）。
+    /// - Returns: エラーメッセージ。成功時は nil。
+    @discardableResult
+    func applySatsPriceBulk(assignments: [Int: Int], typeId: String?) -> String? {
+        if let e = adminPINError() { return e }
+        guard saleState == .idle else { return "会計中はsats価格を変更できません" }
+        guard !assignments.isEmpty else { return "設定するsats価格がありません" }
+        guard assignments.values.allSatisfy({ $0 >= 1 }) else {
+            return "sats価格は1以上の整数で入力してください"
+        }
+        guard let db else { return "データベースを開けません" }
+
+        var updated = inventory
+        let changed = applySatsPriceAssignments(assignments, typeId: typeId,
+                                                inventory: &updated, at: Date())
+        guard !changed.isEmpty else { return "変更はありません" }
+
+        do {
+            try db.persistProducts(changed)
+        } catch {
+            return "sats価格を保存できませんでした: \(error.localizedDescription)"
+        }
+
+        inventory = updated
+        message = "sats価格を \(changed.count)件更新しました（\(satsBulkSummary(changed))）。公開サイトへ反映するには送信してください。"
+        return nil
+    }
+
+    /// 一括設定の結果を、価格帯ごとの短い説明にする。
+    private func satsBulkSummary(_ changed: [Product]) -> String {
+        let groups = Dictionary(grouping: changed, by: \.priceJpy)
+            .sorted { $0.key < $1.key }
+        let parts = groups.prefix(3).map { group in
+            "\(group.key)円→\(Fmt.sats(group.value.first?.priceSats ?? 0)) \(group.value.count)件"
+        }
+        var text = parts.joined(separator: " / ")
+        if groups.count > 3 { text += " 他\(groups.count - 3)価格帯" }
+        return text
+    }
+
     /// 画像ファイルが同梱されていない登録商品（A-1）。
     /// `image_ref` の有無ではなく、バンドル内に実ファイルがあるかで判定する。
     var productsWithoutImage: [Product] { inventory.filter { !$0.hasBundledImage } }

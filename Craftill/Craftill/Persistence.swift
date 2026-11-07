@@ -690,6 +690,15 @@ final class Database {
         }
     }
 
+    /// 商品マスタの複数件更新を1トランザクションで保存する。
+    /// sats価格の一括設定など、商品の一部項目だけをまとめて更新するときに使う。
+    /// 1件でも失敗したら、すべてロールバックする。
+    func persistProducts(_ products: [Product]) throws {
+        try transaction {
+            for p in products { try save(product: p) }
+        }
+    }
+
     /// 販売取消（sales 更新 + 在庫 + 在庫変動）
     func persistVoid(sale: Sale, inventory: [Product], movements: [StockMovement]) throws {
         try transaction {

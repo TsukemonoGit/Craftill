@@ -662,6 +662,51 @@ func editProduct(productId: String, name: String, priceJpy: Int, priceSats: Int?
     return .success("\(productId) を編集")
 }
 
+// ── sats価格の一括設定 ──
+
+/// 円価格ごとのsats価格一括設定の1件分。
+/// プレビューと適用で同じ判定を使うため、変更前の商品と新しいsats価格を保持する。
+struct SatsPriceChange: Identifiable, Equatable {
+    let product: Product
+    let newSats: Int
+
+    var id: String { product.id }
+    var oldSats: Int? { product.priceSats }
+}
+
+/// 円価格ごとのsats価格一括設定で、**実際に値が変わる商品だけ**を返す。
+/// - Parameters:
+///   - assignments: 円価格 → 新しいsats価格（1以上）
+///   - typeId: nil なら全種類。指定した場合はその種類の商品だけ
+///   - inventory: 現在の商品マスタ
+/// - Returns: 並びは `inventory` の順。空なら変更なし。
+func satsPriceChanges(_ assignments: [Int: Int], typeId: String?,
+                      in inventory: [Product]) -> [SatsPriceChange] {
+    inventory.compactMap { p in
+        guard typeId == nil || p.typeId == typeId else { return nil }
+        guard let newSats = assignments[p.priceJpy], newSats >= 1 else { return nil }
+        guard p.priceSats != newSats else { return nil }
+        return SatsPriceChange(product: p, newSats: newSats)
+    }
+}
+
+/// 円価格ごとのsats価格一括設定を適用する。**変更した商品だけ**を返す。
+/// - Note: 呼び出し側はコピーに適用し、DB保存に成功したときだけ本体へ反映する（P-02）。
+@discardableResult
+func applySatsPriceAssignments(_ assignments: [Int: Int], typeId: String?,
+                               inventory: inout [Product], at: Date) -> [Product] {
+    var changed: [Product] = []
+    for i in inventory.indices {
+        guard typeId == nil || inventory[i].typeId == typeId else { continue }
+        guard let newSats = assignments[inventory[i].priceJpy], newSats >= 1 else { continue }
+        guard inventory[i].priceSats != newSats else { continue }
+        inventory[i].priceSats = newSats
+        inventory[i].updatedAt = at
+        changed.append(inventory[i])
+    }
+    return changed
+}
+
 
 
 // @section: csv
