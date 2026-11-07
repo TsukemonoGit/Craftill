@@ -32,7 +32,7 @@
 	const officialUrl = 'https://nostrasia.com';
 	const nostrProfileUrl =
 		'https://njump.me/npub1sjcvg64knxkrt6ev52rywzu9uzqakgy8ehhk8yezxmpewsthst6sw3jqcw';
-	const hashtagUrl = 'https://x.com/hashtag/nostrasia2026';
+	//const hashtagUrl = 'https://x.com/hashtag/nostrasia2026';
 
 	let snapshot = $state<Snapshot | null>(null);
 	let error = $state('');
@@ -430,8 +430,7 @@
 					</p>
 					<h2 class="mt-1 font-display text-3xl leading-none sm:text-4xl">本日のおしながき</h2>
 					<p class="mt-2 text-xs font-bold text-ink/60">
-						会場にならんでいるものと、<span class="mx-0.5 text-lg">{updatedAt || '??'}</span
-						>時点での在庫です。
+						<span class="mx-0.5 text-lg">{updatedAt || '??'}</span>時点での在庫です。
 					</p>
 				</div>
 				{#if snapshot}
@@ -713,14 +712,14 @@
 						>
 							Nostrプロフィール ↗
 						</a>
-						<a
+						<!-- <a
 							href={hashtagUrl}
 							target="_blank"
 							rel="noopener noreferrer"
 							class="rounded-full border border-lemon/30 px-3 py-1 font-latin transition hover:border-lemon hover:text-white"
 						>
 							#nostrasia2026 ↗
-						</a>
+						</a> -->
 					</div>
 				</div>
 
