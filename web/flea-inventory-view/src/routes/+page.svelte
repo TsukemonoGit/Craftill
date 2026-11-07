@@ -17,10 +17,10 @@
 
 	const marqueeBase = [
 		'NOSTRASIA 2026',
-		'フリーマーケット',
+		'Nostr Conference in Asia',
+		'FLEA MARKET',
 		'ものや',
-		'HANDMADE GOODS',
-		'てづくり'
+		'#nostrasia2026'
 	];
 	const marqueeItems = [...marqueeBase, ...marqueeBase];
 
@@ -192,10 +192,10 @@
 </script>
 
 <svelte:head>
-	<title>ものや | NOSTRASIA 2026 フリーマーケット</title>
+	<title>ものや | NOSTRASIA 2026 Flea Market</title>
 	<meta
 		name="description"
-		content="手づくりの雑貨がならぶ、ものやのフリーマーケット。NOSTRASIA 2026 の商品と在庫の一覧です。"
+		content="NOSTRASIA 2026（Nostr Conference in Asia）のフリーマーケットに出店する「ものや」の商品と在庫の一覧です。"
 	/>
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
@@ -230,7 +230,7 @@
 						class="inline-flex items-center gap-2 rounded-full border-2 border-ink bg-paper px-3 py-1 text-[11px] font-bold shadow-[2px_2px_0_0_#131313]"
 					>
 						<span class="h-2 w-2 rounded-full bg-ink" aria-hidden="true"></span>
-						ものや の てづくり市
+						<span>ものや<span class="hidden sm:inline"> @ NOSTRASIA 2026</span></span>
 					</p>
 					{#if demoMode}
 						<span
@@ -252,7 +252,7 @@
 						type="button"
 						onclick={load}
 						disabled={reloadDisabled}
-						class="rounded-full border-2 border-ink bg-paper px-4 py-2 text-xs font-bold shadow-[3px_3px_0_0_#131313] transition hover:-translate-y-0.5 hover:bg-lemon-soft active:translate-x-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0_0_#131313] disabled:cursor-not-allowed disabled:bg-lemon-soft disabled:text-ink/40 disabled:shadow-[2px_2px_0_0_#131313] disabled:hover:translate-y-0"
+						class="shrink-0 rounded-full border-2 border-ink bg-paper px-4 py-2 text-xs font-bold whitespace-nowrap shadow-[3px_3px_0_0_#131313] transition hover:-translate-y-0.5 hover:bg-lemon-soft active:translate-x-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0_0_#131313] disabled:cursor-not-allowed disabled:bg-lemon-soft disabled:text-ink/40 disabled:shadow-[2px_2px_0_0_#131313] disabled:hover:translate-y-0"
 					>
 						{loading ? '取得中…' : '再読み込み'}
 					</button>
@@ -266,18 +266,21 @@
 				<span
 					class="absolute -top-3 left-1/2 -translate-x-1/2 rotate-[-2deg] rounded-sm border-2 border-ink bg-lemon px-4 py-0.5 text-[10px] font-bold tracking-[0.28em] whitespace-nowrap"
 				>
-					HANDMADE FLEAMARKET
+					NOSTRASIA 2026 FLEA MARKET
 				</span>
 
 				<div class="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
 					<div>
-						<p class="inline-flex items-center gap-2">
+						<p class="inline-flex flex-wrap items-center gap-2">
 							<span
 								class="rounded-full border-2 border-ink bg-ink px-3 py-1 font-latin text-[11px] font-extrabold tracking-[0.12em] text-lemon"
 							>
 								NOSTRASIA 2026
 							</span>
-							<span class="text-xs font-bold tracking-wide">フリーマーケット</span>
+							<span class="text-xs font-bold tracking-wide">Flea Market</span>
+							<span class="text-[10px] font-bold tracking-[0.12em] text-ink/45"
+								>NOSTR CONFERENCE IN ASIA</span
+							>
 						</p>
 
 						<h1
@@ -287,8 +290,8 @@
 						</h1>
 
 						<p class="mt-3 font-hand text-base leading-relaxed sm:text-lg">
-							てづくりのもの、ちょっとずつ。<br class="sm:hidden" />
-							手に取って、えらんでいってね。
+							Nostrの祭典のすみっこで、<br class="sm:hidden" />
+							てづくりのものを並べています。
 						</p>
 
 						{#if snapshot}
@@ -320,13 +323,28 @@
 							<div>
 								<p class="font-latin text-2xl leading-none font-extrabold">2026</p>
 								<p class="mt-1.5 text-[9px] font-bold tracking-[0.3em]">NOSTRASIA</p>
-								<p class="text-[9px] tracking-[0.28em]">FLEAMARKET</p>
+								<p class="text-[9px] tracking-[0.28em]">FLEA MARKET</p>
 								<p class="mt-1.5 text-[10px] font-bold">✦ ものや ✦</p>
 							</div>
 						</div>
 					</div>
 				</div>
 			</section>
+
+			<!-- イベント情報 -->
+			<div
+				class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-2xl border-2 border-dashed border-ink/40 bg-paper/50 px-4 py-3 text-[11px] font-bold"
+			>
+				<span class="font-latin text-xs font-extrabold">2026.11.29 SUN</span>
+				<span class="text-ink/25" aria-hidden="true">/</span>
+				<span>13:00–20:00</span>
+				<span class="text-ink/25" aria-hidden="true">/</span>
+				<span>GOX Tokyo（新宿・歌舞伎町）</span>
+				<span
+					class="ml-auto rounded-full border border-ink/30 px-2 py-0.5 font-latin text-[10px] font-bold"
+					>#nostrasia2026</span
+				>
+			</div>
 
 			<div
 				class="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-[10px] font-bold text-ink/55"
@@ -593,14 +611,14 @@
 			>
 				<div>
 					<p class="font-latin text-[10px] font-extrabold tracking-[0.32em] text-lemon/60">
-						HANDMADE FLEAMARKET
+						NOSTRASIA 2026 FLEA MARKET
 					</p>
 					<p class="mt-1 font-display text-4xl">ものや</p>
-					<p class="mt-1.5 text-xs font-bold">NOSTRASIA 2026 フリーマーケット</p>
+					<p class="mt-1.5 text-xs font-bold">2026.11.29 SUN 13:00–20:00 / GOX Tokyo</p>
 				</div>
 				<p class="max-w-xs text-[11px] leading-relaxed font-bold text-lemon/60">
 					画像がない商品は、商品名と属性を表示しています。<br />
-					在庫はお店のレジとつながっています。
+					お支払いは Lightning と現金に対応しています。
 				</p>
 			</div>
 		</footer>
