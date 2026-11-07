@@ -1,33 +1,28 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { dev } from '$app/env';
+	import {
+		makeDemoSnapshot,
+		type Snapshot,
+		type SnapType,
+		type SnapProduct
+	} from '../lib/demo-snapshot';
 
-	type SnapType = {
-		type_id: string;
-		name: string;
-		stock_mode: 'counted' | 'unique' | 'none';
-		attr_labels: string[];
-	};
-	type SnapProduct = {
-		product_id: string;
-		type_id: string;
-		name: string;
-		price_jpy: number;
-		price_sats?: number;
-		stock?: number | null;
-		attrs: (string | null)[];
-		has_image: boolean;
-	};
-	type Snapshot = {
-		created_at: string;
-		types: SnapType[];
-		products: SnapProduct[];
-	};
 	type StockDisplay = { label: string; soldOut: boolean; mode: SnapType['stock_mode'] };
 	type StockFilter = 'all' | 'in_stock' | 'sold_out';
 
 	const yenFormatter = new Intl.NumberFormat('ja-JP');
 	const skeletonItems = Array.from({ length: 8 }, (_, i) => i);
 	const RELOAD_COOLDOWN_MS = 60_000;
+
+	const marqueeBase = [
+		'NOSTRASIA 2026',
+		'フリーマーケット',
+		'ものや',
+		'HANDMADE GOODS',
+		'てづくり'
+	];
+	const marqueeItems = [...marqueeBase, ...marqueeBase];
 
 	let snapshot = $state<Snapshot | null>(null);
 	let error = $state('');
@@ -36,6 +31,7 @@
 	let failedImages = $state<Record<string, boolean>>({});
 	let stockFilter = $state<StockFilter>('all');
 	let coolingDown = $state(false);
+	let demoMode = $state(false);
 	let cooldownTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const reloadDisabled = $derived(loading || coolingDown);
@@ -62,9 +58,19 @@
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			snapshot = await res.json();
 			failedImages = {};
+			demoMode = false;
 		} catch (e) {
-			error = `取得に失敗しました: ${e instanceof Error ? e.message : String(e)}`;
-			endCooldown();
+			if (dev) {
+				// 開発サーバーでは KV が無いので、表示確認用のテストデータを使う。
+				snapshot = makeDemoSnapshot();
+				failedImages = {};
+				demoMode = true;
+				error = '';
+				endCooldown();
+			} else {
+				error = `取得に失敗しました: ${e instanceof Error ? e.message : String(e)}`;
+				endCooldown();
+			}
 		} finally {
 			loading = false;
 		}
@@ -138,8 +144,8 @@
 
 	function filterButtonClass(value: StockFilter): string {
 		return value === stockFilter
-			? 'bg-stone-900 text-white shadow-sm'
-			: 'text-stone-600 hover:bg-stone-100';
+			? 'bg-ink text-lemon shadow-[2px_2px_0_0_#fffdf6]'
+			: 'text-ink hover:bg-lemon-soft';
 	}
 
 	function stockDisplay(
@@ -181,229 +187,347 @@
 	}
 
 	function stockBadgeClass(stock: StockDisplay): string {
-		return stock.mode === 'unique'
-			? 'border-amber-200 bg-amber-50 text-amber-800'
-			: 'border-emerald-200 bg-emerald-50 text-emerald-800';
+		return stock.mode === 'unique' ? 'bg-lemon text-ink' : 'bg-paper text-ink';
 	}
 </script>
 
 <svelte:head>
-	<title>商品一覧</title>
-	<meta name="description" content="Craftill の公開商品と在庫の一覧です。" />
+	<title>ものや | NOSTRASIA 2026 フリーマーケット</title>
+	<meta
+		name="description"
+		content="手づくりの雑貨がならぶ、ものやのフリーマーケット。NOSTRASIA 2026 の商品と在庫の一覧です。"
+	/>
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+	<link
+		href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Mochiy+Pop+One&family=Yusei+Magic&family=Zen+Maru+Gothic:wght@400;500;700;900&display=swap"
+		rel="stylesheet"
+	/>
 </svelte:head>
 
-<div class="min-h-screen bg-stone-50 text-stone-900">
-	<header class="sticky top-0 z-10 border-b border-stone-200 bg-white/85 backdrop-blur">
-		<div
-			class="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-end sm:justify-between"
-		>
-			<div>
-				<h1 class="text-xl font-bold tracking-tight">商品一覧</h1>
-				<p class="mt-1 text-xs text-stone-500">
-					最終更新: {updatedAt || '未取得'}{#if snapshot}<span class="ml-2">全 {totalCount} 点</span
-						>{/if}
-				</p>
-			</div>
-			<div class="flex items-center gap-3">
-				{#if imageVersion}
-					<span class="text-[11px] text-stone-400">画像版 {imageVersion}</span>
-				{/if}
-				<button
-					type="button"
-					onclick={load}
-					disabled={reloadDisabled}
-					class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 shadow-sm transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-				>
-					{loading ? '取得中…' : '再読み込み'}
-				</button>
-			</div>
-		</div>
-	</header>
+<div class="relative min-h-screen overflow-x-hidden bg-lemon font-round text-ink">
+	<div class="dot-grid pointer-events-none fixed inset-0 z-0 opacity-60" aria-hidden="true"></div>
 
-	<main class="mx-auto max-w-6xl px-4 py-6">
-		<p class="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-			送信が遅れている間、在庫表示が古い可能性があります。
-		</p>
-
-		{#if snapshot}
-			<div class="mb-6 flex flex-wrap items-center justify-between gap-3">
-				<div
-					class="inline-flex rounded-lg border border-stone-200 bg-white p-1 shadow-sm"
-					role="group"
-					aria-label="在庫で絞り込み"
-				>
-					<button
-						type="button"
-						aria-pressed={stockFilter === 'all'}
-						onclick={() => (stockFilter = 'all')}
-						class="rounded-md px-3 py-1.5 text-sm font-medium transition {filterButtonClass('all')}"
+	<div class="relative z-10">
+		<!-- 上部マーキー -->
+		<div class="overflow-hidden border-b-[3px] border-ink bg-ink py-2 text-lemon">
+			<div class="marquee-track flex w-max">
+				{#each marqueeItems as word, i (i)}
+					<span
+						class="flex items-center gap-4 px-4 text-[11px] font-bold tracking-[0.22em] whitespace-nowrap"
 					>
-						全体 <span class="ml-0.5 text-xs opacity-70">{filterCounts.all}</span>
-					</button>
-					<button
-						type="button"
-						aria-pressed={stockFilter === 'in_stock'}
-						onclick={() => (stockFilter = 'in_stock')}
-						class="rounded-md px-3 py-1.5 text-sm font-medium transition {filterButtonClass(
-							'in_stock'
-						)}"
-					>
-						在庫あり <span class="ml-0.5 text-xs opacity-70">{filterCounts.inStock}</span>
-					</button>
-					<button
-						type="button"
-						aria-pressed={stockFilter === 'sold_out'}
-						onclick={() => (stockFilter = 'sold_out')}
-						class="rounded-md px-3 py-1.5 text-sm font-medium transition {filterButtonClass(
-							'sold_out'
-						)}"
-					>
-						在庫なし <span class="ml-0.5 text-xs opacity-70">{filterCounts.soldOut}</span>
-					</button>
-				</div>
-				<p class="text-xs text-stone-500">{shownCount} 点を表示中</p>
-			</div>
-		{/if}
-
-		{#if error}
-			<div class="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-				<p>{error}</p>
-				<button
-					type="button"
-					onclick={load}
-					disabled={reloadDisabled}
-					class="mt-3 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-800 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
-				>
-					再試行
-				</button>
-			</div>
-		{/if}
-
-		{#if loading && !snapshot}
-			<div
-				class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
-				aria-hidden="true"
-			>
-				{#each skeletonItems as item (item)}
-					<div class="overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm">
-						<div class="aspect-square animate-pulse bg-stone-200"></div>
-						<div class="space-y-2 p-3">
-							<div class="h-2.5 w-1/3 animate-pulse rounded bg-stone-200"></div>
-							<div class="h-3.5 w-4/5 animate-pulse rounded bg-stone-200"></div>
-							<div class="h-4 w-2/5 animate-pulse rounded bg-stone-200"></div>
-						</div>
-					</div>
+						<span class="font-latin font-extrabold">{word}</span>
+						<span class="text-lemon/60" aria-hidden="true">✦</span>
+					</span>
 				{/each}
 			</div>
-		{:else if snapshot && snapshot.products.length === 0}
-			<p class="py-16 text-center text-sm text-stone-500">公開中の商品はありません。</p>
-		{:else if snapshot && groups.length === 0}
-			<p class="py-16 text-center text-sm text-stone-500">条件に一致する商品はありません。</p>
-		{:else}
-			<div class="space-y-10">
-				{#each groups as g (g.type.type_id)}
-					<section>
-						<div class="mb-4 flex items-end justify-between border-b border-stone-200 pb-2">
-							<h2 class="text-lg font-semibold tracking-tight">{g.type.name}</h2>
-							<span class="text-xs text-stone-500">{g.products.length} 点</span>
+		</div>
+
+		<header class="mx-auto max-w-6xl px-4 pt-6">
+			<div class="flex items-center justify-between gap-3">
+				<div class="flex flex-wrap items-center gap-2">
+					<p
+						class="inline-flex items-center gap-2 rounded-full border-2 border-ink bg-paper px-3 py-1 text-[11px] font-bold shadow-[2px_2px_0_0_#131313]"
+					>
+						<span class="h-2 w-2 rounded-full bg-ink" aria-hidden="true"></span>
+						ものや の てづくり市
+					</p>
+					{#if demoMode}
+						<span
+							class="inline-flex items-center gap-1.5 rounded-full border-2 border-dashed border-ink bg-lemon-soft px-3 py-1 text-[10px] font-bold"
+							title="npm run dev の表示確認用テストデータです"
+						>
+							<span class="h-1.5 w-1.5 animate-pulse rounded-full bg-ink" aria-hidden="true"></span>
+							DEV / テストデータ
+						</span>
+					{/if}
+				</div>
+				<div class="flex items-center gap-2">
+					{#if imageVersion}
+						<span class="hidden text-[10px] font-bold text-ink/45 sm:inline"
+							>画像版 {imageVersion}</span
+						>
+					{/if}
+					<button
+						type="button"
+						onclick={load}
+						disabled={reloadDisabled}
+						class="rounded-full border-2 border-ink bg-paper px-4 py-2 text-xs font-bold shadow-[3px_3px_0_0_#131313] transition hover:-translate-y-0.5 hover:bg-lemon-soft active:translate-x-0.5 active:translate-y-0.5 active:shadow-[1px_1px_0_0_#131313] disabled:cursor-not-allowed disabled:bg-lemon-soft disabled:text-ink/40 disabled:shadow-[2px_2px_0_0_#131313] disabled:hover:translate-y-0"
+					>
+						{loading ? '取得中…' : '再読み込み'}
+					</button>
+				</div>
+			</div>
+
+			<!-- ヒーローパネル -->
+			<section
+				class="relative mt-5 rounded-[2rem] border-[3px] border-ink bg-paper px-5 pt-9 pb-6 shadow-[7px_7px_0_0_#131313] sm:px-9 sm:pt-11 sm:pb-8"
+			>
+				<span
+					class="absolute -top-3 left-1/2 -translate-x-1/2 rotate-[-2deg] rounded-sm border-2 border-ink bg-lemon px-4 py-0.5 text-[10px] font-bold tracking-[0.28em] whitespace-nowrap"
+				>
+					HANDMADE FLEAMARKET
+				</span>
+
+				<div class="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+					<div>
+						<p class="inline-flex items-center gap-2">
+							<span
+								class="rounded-full border-2 border-ink bg-ink px-3 py-1 font-latin text-[11px] font-extrabold tracking-[0.12em] text-lemon"
+							>
+								NOSTRASIA 2026
+							</span>
+							<span class="text-xs font-bold tracking-wide">フリーマーケット</span>
+						</p>
+
+						<h1
+							class="mt-3 font-display text-[clamp(3.4rem,15vw,7.5rem)] leading-[0.95] tracking-tight"
+						>
+							ものや
+						</h1>
+
+						<p class="mt-3 font-hand text-base leading-relaxed sm:text-lg">
+							てづくりのもの、ちょっとずつ。<br class="sm:hidden" />
+							手に取って、えらんでいってね。
+						</p>
+
+						{#if snapshot}
+							<div class="mt-5 flex flex-wrap items-center gap-2">
+								<span
+									class="rounded-full border-2 border-ink bg-ink px-3 py-1 text-[11px] font-bold text-lemon"
+								>
+									ぜんぶ {totalCount} 点
+								</span>
+								<span
+									class="rounded-full border-2 border-ink bg-paper px-3 py-1 text-[11px] font-bold"
+								>
+									まだある {filterCounts.inStock} 点
+								</span>
+								<span
+									class="rounded-full border-2 border-dashed border-ink/40 px-3 py-1 text-[11px] font-bold text-ink/60"
+								>
+									SOLD OUT {filterCounts.soldOut} 点
+								</span>
+							</div>
+						{/if}
+					</div>
+
+					<!-- スタンプ -->
+					<div class="hidden shrink-0 sm:block" aria-hidden="true">
+						<div
+							class="stamp-rotate grid h-32 w-32 place-items-center rounded-full border-[3px] border-dashed border-ink/70 text-center"
+						>
+							<div>
+								<p class="font-latin text-2xl leading-none font-extrabold">2026</p>
+								<p class="mt-1.5 text-[9px] font-bold tracking-[0.3em]">NOSTRASIA</p>
+								<p class="text-[9px] tracking-[0.28em]">FLEAMARKET</p>
+								<p class="mt-1.5 text-[10px] font-bold">✦ ものや ✦</p>
+							</div>
 						</div>
+					</div>
+				</div>
+			</section>
 
-						<ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-							{#each g.products as p (p.product_id)}
-								{@const stock = stockDisplay(g.type.stock_mode, p.stock)}
-								{@const attrs = attributePairs(g.type, p)}
-								<li>
-									<article
-										class="group flex h-full flex-col overflow-hidden rounded-xl border border-stone-200 bg-white shadow-sm transition hover:shadow-md {stock?.soldOut
-											? 'opacity-80'
-											: ''}"
-									>
-						<div class="relative aspect-[4/3] overflow-hidden bg-stone-100">
-											{#if showImage(p)}
-												<img
-													src={imageUrl(p.product_id)}
-													alt={p.name}
-													loading="lazy"
-													decoding="async"
-													class="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-													onerror={() => markImageFailed(p.product_id)}
-												/>
-											{:else}
-												<div
-													class="flex h-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-stone-100 to-stone-200 p-4 text-center"
-												>
-													<svg
-														xmlns="http://www.w3.org/2000/svg"
-														viewBox="0 0 24 24"
-														fill="none"
-														stroke="currentColor"
-														stroke-width="1.5"
-														class="h-7 w-7 text-stone-400"
-														aria-hidden="true"
+			<div
+				class="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-[10px] font-bold text-ink/55"
+			>
+				<p>最終更新: {updatedAt || '未取得'}</p>
+				{#if imageVersion}
+					<p class="sm:hidden">画像版 {imageVersion}</p>
+				{/if}
+			</div>
+		</header>
+
+		<main class="mx-auto max-w-6xl px-4 pt-8 pb-4">
+			<!-- 注意書き -->
+			<p
+				class="mb-6 flex items-start gap-2 rounded-2xl border-2 border-ink bg-ink px-4 py-3 text-[11px] leading-relaxed font-bold text-lemon"
+			>
+				<span
+					class="mt-px grid h-4 w-4 shrink-0 place-items-center rounded-full bg-lemon text-[10px] font-black text-ink"
+					aria-hidden="true">!</span
+				>
+				送信が遅れている間は、在庫表示が古いことがあります。気になるものはお早めにどうぞ。
+			</p>
+
+			{#if snapshot}
+				<div class="mb-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+					<div
+						class="inline-flex w-fit flex-wrap items-center gap-1 rounded-full border-2 border-ink bg-paper p-1 shadow-[3px_3px_0_0_#131313]"
+						role="group"
+						aria-label="在庫で絞り込み"
+					>
+						<button
+							type="button"
+							aria-pressed={stockFilter === 'all'}
+							onclick={() => (stockFilter = 'all')}
+							class="rounded-full px-3.5 py-1.5 text-xs font-bold transition {filterButtonClass(
+								'all'
+							)}"
+						>
+							すべて <span class="ml-0.5 font-latin text-[10px] opacity-70">{filterCounts.all}</span
+							>
+						</button>
+						<button
+							type="button"
+							aria-pressed={stockFilter === 'in_stock'}
+							onclick={() => (stockFilter = 'in_stock')}
+							class="rounded-full px-3.5 py-1.5 text-xs font-bold transition {filterButtonClass(
+								'in_stock'
+							)}"
+						>
+							在庫あり <span class="ml-0.5 font-latin text-[10px] opacity-70"
+								>{filterCounts.inStock}</span
+							>
+						</button>
+						<button
+							type="button"
+							aria-pressed={stockFilter === 'sold_out'}
+							onclick={() => (stockFilter = 'sold_out')}
+							class="rounded-full px-3.5 py-1.5 text-xs font-bold transition {filterButtonClass(
+								'sold_out'
+							)}"
+						>
+							SOLD OUT <span class="ml-0.5 font-latin text-[10px] opacity-70"
+								>{filterCounts.soldOut}</span
+							>
+						</button>
+					</div>
+					<p class="text-xs font-bold">
+						<span class="font-latin text-base">{shownCount}</span> 点 ならんでいます
+					</p>
+				</div>
+			{/if}
+
+			{#if error}
+				<div class="mb-6 rounded-2xl border-2 border-ink bg-paper p-5 shadow-[4px_4px_0_0_#131313]">
+					<p class="text-sm font-bold">{error}</p>
+					<button
+						type="button"
+						onclick={load}
+						disabled={reloadDisabled}
+						class="mt-3 rounded-full border-2 border-ink bg-lemon px-4 py-1.5 text-xs font-bold transition hover:bg-lemon-soft disabled:cursor-not-allowed disabled:opacity-50"
+					>
+						もういちど試す
+					</button>
+				</div>
+			{/if}
+
+			{#if loading && !snapshot}
+				<div
+					class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5"
+					aria-hidden="true"
+				>
+					{#each skeletonItems as item (item)}
+						<div
+							class="overflow-hidden rounded-2xl border-2 border-ink bg-paper shadow-[4px_4px_0_0_#131313]"
+						>
+							<div class="aspect-4/3 animate-pulse border-b-2 border-ink bg-lemon-soft"></div>
+							<div class="space-y-2 p-3">
+								<div class="h-2 w-1/3 animate-pulse rounded-full bg-ink/10"></div>
+								<div class="h-3.5 w-4/5 animate-pulse rounded-full bg-ink/10"></div>
+								<div class="h-5 w-2/5 animate-pulse rounded-full bg-ink/10"></div>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{:else if snapshot && snapshot.products.length === 0}
+				<div
+					class="rounded-[2rem] border-[3px] border-dashed border-ink/50 bg-paper/60 px-6 py-16 text-center"
+				>
+					<p class="text-3xl" aria-hidden="true">☺</p>
+					<p class="mt-3 font-display text-lg">いまは、ならんでいるものがありません。</p>
+					<p class="mt-1 text-xs font-bold text-ink/50">またのぞいてみてください。</p>
+				</div>
+			{:else if snapshot && groups.length === 0}
+				<div
+					class="rounded-[2rem] border-[3px] border-dashed border-ink/50 bg-paper/60 px-6 py-16 text-center"
+				>
+					<p class="text-3xl" aria-hidden="true">☺</p>
+					<p class="mt-3 font-display text-lg">この条件のものは、いまありません。</p>
+					<p class="mt-1 text-xs font-bold text-ink/50">「すべて」に戻してみてください。</p>
+				</div>
+			{:else}
+				<div class="space-y-12">
+					{#each groups as g, gi (g.type.type_id)}
+						<section>
+							<div class="mb-4 flex items-center gap-3">
+								<span
+									class="grid h-9 min-w-9 place-items-center rounded-full border-2 border-ink bg-ink px-2 font-latin text-sm font-extrabold text-lemon"
+								>
+									{String(gi + 1).padStart(2, '0')}
+								</span>
+								<div
+									class="flex flex-1 items-end justify-between gap-3 border-b-[3px] border-dashed border-ink/40 pb-2"
+								>
+									<h2 class="font-display text-xl leading-none sm:text-2xl">{g.type.name}</h2>
+									<span class="text-xs font-bold whitespace-nowrap">{g.products.length} 点</span>
+								</div>
+							</div>
+
+							<ul
+								class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5"
+							>
+								{#each g.products as p (p.product_id)}
+									{@const stock = stockDisplay(g.type.stock_mode, p.stock)}
+									{@const attrs = attributePairs(g.type, p)}
+									<li>
+										<article
+											class="group flex h-full flex-col overflow-hidden rounded-2xl border-2 border-ink bg-paper shadow-[4px_4px_0_0_#131313] transition duration-200 hover:-translate-y-1 hover:shadow-[6px_6px_0_0_#131313]"
+										>
+											<div
+												class="relative aspect-4/3 overflow-hidden border-b-2 border-ink bg-lemon-soft"
+											>
+												{#if showImage(p)}
+													<img
+														src={imageUrl(p.product_id)}
+														alt={p.name}
+														loading="lazy"
+														decoding="async"
+														class="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+														onerror={() => markImageFailed(p.product_id)}
+													/>
+												{:else}
+													<div
+														class="flex h-full flex-col items-center justify-center gap-2 bg-lemon-soft p-4 text-center"
 													>
-														<path
-															stroke-linecap="round"
-															stroke-linejoin="round"
-															d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A1.5 1.5 0 0 0 21.75 19.5V4.5A1.5 1.5 0 0 0 20.25 3H3.75A1.5 1.5 0 0 0 2.25 4.5v15A1.5 1.5 0 0 0 3.75 21Z"
-														/>
-													</svg>
-													<p class="line-clamp-3 text-sm font-semibold text-stone-600">
-														{p.name}
-													</p>
-													{#if attrs.length > 0}
-														<p class="line-clamp-2 text-xs text-stone-500">
-															{attrs.map((a) => a.value).join(' / ')}
-														</p>
-													{/if}
-												</div>
-											{/if}
-
-											{#if stock?.soldOut}
-												<div
-													class="absolute inset-0 flex items-center justify-center bg-stone-900/45"
-												>
-													<span
-														class="rounded-full bg-stone-900/90 px-4 py-1.5 text-sm font-semibold tracking-widest text-white"
-													>
-														SOLD OUT
-													</span>
-												</div>
-											{/if}
-										</div>
-
-										<div class="flex flex-1 flex-col gap-1.5 p-3">
-											<p class="text-[11px] font-medium tracking-wide text-stone-400">
-												{p.product_id}
-											</p>
-											<h3 class="text-sm leading-snug font-semibold text-stone-900">{p.name}</h3>
-
-											{#if attrs.length > 0}
-												<ul class="flex flex-wrap gap-1">
-													{#each attrs as a, i (i)}
-														<li
-															class="rounded bg-stone-100 px-1.5 py-0.5 text-[11px] text-stone-600"
+														<svg
+															xmlns="http://www.w3.org/2000/svg"
+															viewBox="0 0 24 24"
+															fill="none"
+															stroke="currentColor"
+															stroke-width="1.5"
+															class="h-7 w-7 text-ink/30"
+															aria-hidden="true"
 														>
-															{#if a.label}<span class="text-stone-400">{a.label}:</span>{/if}
-															{a.value}
-														</li>
-													{/each}
-												</ul>
-											{/if}
-
-											<div class="mt-auto flex items-end justify-between gap-2 pt-2">
-												<div>
-													<p class="text-base font-bold text-stone-900">
-														{yenFormatter.format(p.price_jpy)}円
-													</p>
-													{#if hasSats(p)}
-														<p class="text-xs text-stone-500">
-															{yenFormatter.format(p.price_sats ?? 0)} sats
+															<path
+																stroke-linecap="round"
+																stroke-linejoin="round"
+																d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A1.5 1.5 0 0 0 21.75 19.5V4.5A1.5 1.5 0 0 0 20.25 3H3.75A1.5 1.5 0 0 0 2.25 4.5v15A1.5 1.5 0 0 0 3.75 21Z"
+															/>
+														</svg>
+														<p class="line-clamp-3 font-display text-sm leading-snug">
+															{p.name}
 														</p>
-													{/if}
-												</div>
-												{#if stock && !stock.soldOut}
+														{#if attrs.length > 0}
+															<p class="line-clamp-2 text-[10px] font-bold text-ink/50">
+																{attrs.map((a) => a.value).join(' / ')}
+															</p>
+														{/if}
+													</div>
+												{/if}
+
+												{#if stock?.soldOut}
+													<div class="absolute inset-0 grid place-items-center bg-ink/35">
+														<span
+															class="rotate-[-8deg] rounded-md border-[3px] border-ink bg-lemon px-3 py-1 font-latin text-xs font-extrabold tracking-[0.18em] text-ink shadow-[3px_3px_0_0_#131313]"
+														>
+															SOLD OUT
+														</span>
+													</div>
+												{:else if stock}
 													<span
-														class="shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium {stockBadgeClass(
+														class="absolute top-2 left-2 z-10 rounded-full border-2 border-ink px-2 py-0.5 text-[10px] font-bold shadow-[2px_2px_0_0_#131313] {stockBadgeClass(
 															stock
 														)}"
 													>
@@ -411,18 +535,74 @@
 													</span>
 												{/if}
 											</div>
-										</div>
-									</article>
-								</li>
-							{/each}
-						</ul>
-					</section>
-				{/each}
-			</div>
-		{/if}
-	</main>
 
-	<footer class="mx-auto max-w-6xl px-4 pb-8 text-[11px] text-stone-400">
-		画像がない商品は、商品名と属性を表示しています。
-	</footer>
+											<div class="flex flex-1 flex-col gap-1.5 p-3">
+												<p class="font-latin text-[10px] font-bold tracking-[0.14em] text-ink/35">
+													{p.product_id}
+												</p>
+												<h3 class="font-display text-sm leading-snug text-ink sm:text-[15px]">
+													{p.name}
+												</h3>
+
+												{#if attrs.length > 0}
+													<ul class="flex flex-wrap gap-1">
+														{#each attrs as a, i (i)}
+															<li
+																class="rounded-md border border-ink/15 bg-lemon-soft/70 px-1.5 py-0.5 text-[10px] font-bold text-ink/70"
+															>
+																{#if a.label}<span class="text-ink/40">{a.label}:</span>{/if}
+																{a.value}
+															</li>
+														{/each}
+													</ul>
+												{/if}
+
+												<div
+													class="mt-auto flex items-end justify-between gap-2 border-t-2 border-dotted border-ink/15 pt-2"
+												>
+													<div>
+														<p class="font-latin text-xl leading-none font-extrabold">
+															{yenFormatter.format(p.price_jpy)}<span
+																class="ml-0.5 font-round text-xs">円</span
+															>
+														</p>
+														{#if hasSats(p)}
+															<p class="mt-1 font-latin text-[10px] font-bold text-ink/50">
+																₿ {yenFormatter.format(p.price_sats ?? 0)} sats
+															</p>
+														{/if}
+													</div>
+													{#if stock?.soldOut}
+														<span class="text-[10px] font-bold text-ink/40">完売御礼</span>
+													{/if}
+												</div>
+											</div>
+										</article>
+									</li>
+								{/each}
+							</ul>
+						</section>
+					{/each}
+				</div>
+			{/if}
+		</main>
+
+		<footer class="mt-12 border-t-[3px] border-ink bg-ink px-4 py-10 text-lemon">
+			<div
+				class="mx-auto flex max-w-6xl flex-col gap-6 sm:flex-row sm:items-end sm:justify-between"
+			>
+				<div>
+					<p class="font-latin text-[10px] font-extrabold tracking-[0.32em] text-lemon/60">
+						HANDMADE FLEAMARKET
+					</p>
+					<p class="mt-1 font-display text-4xl">ものや</p>
+					<p class="mt-1.5 text-xs font-bold">NOSTRASIA 2026 フリーマーケット</p>
+				</div>
+				<p class="max-w-xs text-[11px] leading-relaxed font-bold text-lemon/60">
+					画像がない商品は、商品名と属性を表示しています。<br />
+					在庫はお店のレジとつながっています。
+				</p>
+			</div>
+		</footer>
+	</div>
 </div>
