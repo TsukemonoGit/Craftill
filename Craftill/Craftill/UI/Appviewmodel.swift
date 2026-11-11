@@ -191,7 +191,16 @@ final class AppViewModel: ObservableObject {
     private let pathQueue = DispatchQueue(label: "dev.craftill.network-monitor")
     /// 変更をまとめて自動送信するまでの待ち時間（最後の変更から）。
     private static let autoSendDelay: TimeInterval = 10
+    /// 自動送信が一時的に失敗したときの再試行間隔（秒）。末尾の値で頭打ちにする。
+    private static let autoRetryDelays: [TimeInterval] = [15, 30, 60, 120, 300]
     private var autoSendTask: DispatchWorkItem?
+    /// 一時的な送信失敗後に予約した再送。
+    private var autoRetryTask: DispatchWorkItem?
+    /// 連続失敗回数。再試行間隔の選択に使う。
+    private var autoRetryAttempt = 0
+    /// 商品マスタを正常に読み込めたか。読めていない間は空のスナップショットを
+    /// 送って公開在庫を消さないよう、自動送信を保留する。
+    private var isMasterLoaded = false
     /// 送信中か。並行送信を防ぎ、古いスナップショットが後から届くのを避ける。
     private var isSending = false
     /// 未送信の変更があるか。通信回復時・起動時に送る。UserDefaults に保存する。
@@ -232,7 +241,8 @@ final class AppViewModel: ObservableObject {
         pathMonitor.start(queue: pathQueue)
 
         // 前回終了時に未送信だった変更があれば送る。
-         if pendingAutoSend { requestAutoSend() }
+        // 商品マスタを読めていないときは、空のスナップショットを送らないよう保留する。
+         if pendingAutoSend && isMasterLoaded { requestAutoSend() }
 
         // 会計状態は更新のたびに保存する（A-3）。willChange の直後に読む。
         objectWillChange
@@ -245,10 +255,13 @@ final class AppViewModel: ObservableObject {
 
     deinit {
         pathMonitor.cancel()
+        autoSendTask?.cancel()
+        autoRetryTask?.cancel()
     }
 
     private func loadMaster() {
         guard let db else {
+            isMasterLoaded = false
             message = "データベースを開けませんでした"
             return
         }
@@ -262,7 +275,9 @@ final class AppViewModel: ObservableObject {
             syncLog = try db.loadSyncLog()
             lastSyncAt = syncLog.last?.at
             selectedTypeId = types.first?.typeId ?? ""
+            isMasterLoaded = true
         } catch {
+            isMasterLoaded = false
             message = "データの読み込みに失敗しました: \(error.localizedDescription)"
         }
     }
@@ -1842,6 +1857,11 @@ final class AppViewModel: ObservableObject {
     func saveSyncSettings(endpoint newEndpoint: String? = nil,
                           newToken: String? = nil) -> Bool {
         let endpoint = (newEndpoint ?? syncEndpoint).trimmingCharacters(in: .whitespacesAndNewlines)
+        // トークンを平文で送らないよう HTTPS のみ許可する（CWE-319）。
+        if !endpoint.isEmpty && Self.syncURL(from: endpoint) == nil {
+            message = "送信先は https:// で始まるURLを指定してください"
+            return false
+        }
         if let newToken {
             let token = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
             guard SyncSettings.saveToken(token) else {
@@ -1877,6 +1897,7 @@ final class AppViewModel: ObservableObject {
             if pendingAutoSend { requestAutoSend() }
         } else {
             cancelScheduledAutoSend()
+            cancelAutoRetry(reset: true)
         }
     }
 
@@ -1886,9 +1907,13 @@ final class AppViewModel: ObservableObject {
         changeGeneration += 1
         pendingAutoSend = true
         guard autoSendEnabled else { return }
+        // マスタを読めていない間に送ると、空のスナップショットで公開在庫を消す。
+        guard isMasterLoaded else { return }
         let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !endpoint.isEmpty else { return }
+        guard !endpoint.isEmpty, Self.syncURL(from: endpoint) != nil else { return }
         cancelScheduledAutoSend()
+        // 新しい変更が入ったので、待ち時間や再試行回数はやり直す。
+        cancelAutoRetry(reset: true)
         let task = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.autoSendTask = nil
@@ -1901,6 +1926,52 @@ final class AppViewModel: ObservableObject {
     private func cancelScheduledAutoSend() {
         autoSendTask?.cancel()
         autoSendTask = nil
+    }
+
+    /// 予約済みの自動再送を取り消す。`reset` は連続失敗回数も戻す。
+    private func cancelAutoRetry(reset: Bool = false) {
+        autoRetryTask?.cancel()
+        autoRetryTask = nil
+        if reset { autoRetryAttempt = 0 }
+    }
+
+    /// 一時的な失敗のあと、間隔を空けて自動再送する。
+    /// オフラインのときは通信回復時の送信に任せる。
+    private func scheduleAutoRetry() {
+        guard autoSendEnabled, isMasterLoaded, pendingAutoSend, isOnline else { return }
+        let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty, Self.syncURL(from: endpoint) != nil else { return }
+        cancelAutoRetry()
+        let index = min(autoRetryAttempt, Self.autoRetryDelays.count - 1)
+        let delay = Self.autoRetryDelays[index]
+        autoRetryAttempt += 1
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.autoRetryTask = nil
+            guard self.autoSendEnabled, self.isMasterLoaded, self.pendingAutoSend else { return }
+            self.sendSnapshot(automatic: true)
+        }
+        autoRetryTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
+    }
+
+    /// 送信先として使えるURLか。Bearer トークンを平文で送らないよう HTTPS のみ許可する。
+    private static func syncURL(from endpoint: String) -> URL? {
+        guard let url = URL(string: endpoint),
+              url.scheme?.lowercased() == "https",
+              let host = url.host,
+              !host.isEmpty else { return nil }
+        return url
+    }
+
+    /// 待ってから再送すれば成功する可能性があるか。
+    private static func isRetryableSyncError(_ error: Error) -> Bool {
+        if let sendError = error as? SnapshotSender.SendError {
+            return sendError.isRetryable
+        }
+        if error is EncodingError { return false }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return false }
+        return true
     }
 
     /// 実際にスナップショットを送信する。成功ログは HTTP 2xx のときだけ残す。
@@ -1916,8 +1987,20 @@ final class AppViewModel: ObservableObject {
              }
              return
          }
+        // これから送るので、予約済みの再送は取り消す（失敗時に改めて予約する）。
+        cancelAutoRetry()
+        // マスタを読めていない状態で送ると、空のスナップショットで公開在庫を消す。
+        guard isMasterLoaded else {
+            if automatic {
+                pendingAutoSend = true
+            } else {
+                message = "商品データを読み込めていないため送信できません。アプリを再起動してください"
+            }
+            return
+        }
         let generation = changeGeneration
-        let snapshot = makeSnapshot(types: types, inventory: inventory, now: Date())
+        let snapshot = makeSnapshot(types: types, inventory: inventory, now: Date(),
+                                    revision: SyncSettings.nextRevision())
 
         let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !endpoint.isEmpty else {
@@ -1925,9 +2008,9 @@ final class AppViewModel: ObservableObject {
             else { recordSyncResult(snapshot: snapshot, error: "送信先が未設定です（送信先URLを保存してください）") }
             return
         }
-        guard let url = URL(string: endpoint), url.scheme != nil else {
+        guard let url = Self.syncURL(from: endpoint) else {
             if automatic { pendingAutoSend = true }
-            else { recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です") }
+            else { recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です（https:// で指定してください）") }
             return
         }
         guard isOnline else {
@@ -1949,6 +2032,7 @@ final class AppViewModel: ObservableObject {
                 switch result {
                 case .success:
                     self.staleRejected = false
+                    self.cancelAutoRetry(reset: true)
                     // 送信中に新しい変更が入っていた場合は、保留を残す。
                     if self.changeGeneration == generation {
                         self.pendingAutoSend = false
@@ -1968,8 +2052,15 @@ final class AppViewModel: ObservableObject {
                          if self.changeGeneration == generation { self.pendingAutoSend = false }
                          // 手動送信で再送できるよう、未反映として記録する。
                          self.staleRejected = true
+                         self.cancelAutoRetry(reset: true)
                      } else if automatic {
                          self.pendingAutoSend = true
+                         // サーバー障害・429・通信断などは、少し待って自動で再送する。
+                         if Self.isRetryableSyncError(error) {
+                             self.scheduleAutoRetry()
+                         } else {
+                             self.cancelAutoRetry(reset: true)
+                         }
                      }
                     self.recordSyncResult(snapshot: snapshot, error: error.localizedDescription)
                     self.message = isStale

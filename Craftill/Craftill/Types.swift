@@ -304,7 +304,10 @@ struct SnapshotProduct: Codable, Equatable {
 }
 
 struct Snapshot: Codable, Equatable {
-    let createdAt: Date        // スナップショット作成時刻
+    let createdAt: Date        // スナップショット作成時刻（ミリ秒精度で送る）
+    /// 同じ時刻に複数回送っても新旧を判別できるよう、送信ごとに増える番号。
+    /// 受信側は `(created_at, revision)` の順で比較する。
+    let revision: Int
     let types: [SnapshotType]
     let products: [SnapshotProduct]
 }

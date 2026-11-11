@@ -2352,7 +2352,7 @@ struct PriceListView: View {
                         TableRowView(cells: [p.id, p.name], widths: [100, 240])
                     }
                     if vm.productsWithoutImage.isEmpty { Text("なし").foregroundColor(.secondary) }
-                    Text("保存先フォルダに `<商品ID>.jpg` がない商品IDです。先に写真を保存してください。別名（`image_ref`）で保存されている画像は、保存先フォルダで `<商品ID>.jpg` に名前を変えてからコピーしてください。Web用は、ここに載っていない商品の `<商品ID>.jpg` を static/images へコピーしてください。")
+                    Text("保存先フォルダに `<商品ID>.jpg` がない商品IDです。先に写真を保存してください。別名（`image_ref`）で保存されている画像は、元ファイルを残し、保存先フォルダに `<商品ID>.jpg` という名前でコピーしてください。Web用は、ここに載っていない商品の `<商品ID>.jpg` を static/images へコピーしてください。")
                         .font(.caption).foregroundColor(.secondary)
                 }
             }
@@ -2514,7 +2514,7 @@ struct SyncView: View {
                         get: { vm.autoSendEnabled },
                         set: { vm.setAutoSendEnabled($0) }
                     ))
-                    Text("会計・販売取消・在庫調整・商品編集などのあと、最後の変更から約10秒待って1回だけ送信します。通信できないときは、回復後に送ります。手動送信はいつでもできます。")
+                    Text("会計・販売取消・在庫調整・商品編集などのあと、最後の変更から約10秒待って1回だけ送信します。通信できないときは、回復後に送ります。一時的な送信失敗（サーバー障害・429）は間隔を空けて自動で再試行します。手動送信はいつでもできます。")
                         .font(.caption).foregroundColor(.secondary)
                 }
                  if vm.staleRejected {

@@ -11,10 +11,21 @@ enum SyncSettings {
     private static let autoSendKey = "craftill.syncAutoSend"
     private static let pendingAutoSendKey = "craftill.syncPendingAutoSend"
     private static let staleRejectedKey = "craftill.syncStaleRejected"
+    private static let revisionKey = "craftill.syncRevision"
 
     static var endpoint: String {
         get { UserDefaults.standard.string(forKey: endpointKey) ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: endpointKey) }
+    }
+
+    /// スナップショットの順序を識別する単調増加の番号。
+    /// 同じミリ秒に複数送っても新しい方を判別できるよう、送信のたびに増やす。
+    /// アプリを再起動しても続きから採番する。
+    static func nextRevision() -> Int {
+        let defaults = UserDefaults.standard
+        let next = defaults.integer(forKey: revisionKey) + 1
+        defaults.set(next, forKey: revisionKey)
+        return next
     }
 
     /// 会計・在庫・商品などの変更後に、自動でスナップショットを送るか（全体設定）。
@@ -102,7 +113,27 @@ struct SnapshotSender {
 
             }
         }
+
+        /// 待ってから再送すれば成功する可能性があるか。
+        /// 4xx の多く（認証・URL・競合）は再送しても同じ結果になるため含めない。
+        var isRetryable: Bool {
+            switch self {
+            case .badResponse(let code):
+                return code == 408 || code == 425 || code == 429 || code >= 500
+            case .emptyResponse:
+                return true
+            case .stale:
+                return false
+            }
+        }
     }
+
+    /// ミリ秒付きの ISO 8601。同じ秒に複数送っても `created_at` で新旧を判別できる。
+    private static let iso8601WithMilliseconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     /// 認証付きで JSON を POST する。成功時だけ戻る（失敗は throw）。
     func send(_ snapshot: Snapshot, completion: @escaping (Result<Void, Error>) -> Void) {
@@ -115,7 +146,10 @@ struct SnapshotSender {
 
         do {
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            encoder.dateEncodingStrategy = .custom { date, encoder in
+                var container = encoder.singleValueContainer()
+                try container.encode(Self.iso8601WithMilliseconds.string(from: date))
+            }
             encoder.keyEncodingStrategy = .convertToSnakeCase
             request.httpBody = try encoder.encode(snapshot)
         } catch {
