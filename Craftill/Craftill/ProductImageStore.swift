@@ -76,7 +76,17 @@ enum ProductImageStore {
         displayURL(fileName: fileName) != nil
     }
 
+    /// 保存先フォルダに実ファイルがあるか。旧版のアプリ内コピーは含めない。
+    /// Web 用に `static/images` へコピーできる画像かどうかの判定に使う。
+    static func hasExternalImage(fileName: String) -> Bool {
+        guard !fileName.isEmpty, let external = externalURL(fileName: fileName) else {
+            return false
+        }
+        return FileManager.default.fileExists(atPath: external.path)
+    }
+
     /// 外部フォルダまたは旧版のアプリ内コピーに実体があるか（同梱画像は含めない）。
+    /// レジ表示・削除可否の判定用。Web 用にコピーできるかは `hasExternalImage` で判定する。
     static func hasRuntimeImage(fileName: String) -> Bool {
         guard !fileName.isEmpty else { return false }
         if let external = externalURL(fileName: fileName),

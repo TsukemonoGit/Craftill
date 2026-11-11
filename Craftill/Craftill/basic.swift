@@ -1329,7 +1329,8 @@ func setRefunded(saleId: String, value: Bool = true,
 
 // @section: snapshot
 /// 送信スナップショットを作る。**`image_ref` は含めない**。
-/// `has_image` は保存先フォルダの実ファイルの実在のみから導出（A-14。旧版の同梱画像は含めない）。
+/// `has_image` は保存先フォルダの `<商品ID>.jpg` の実在のみから導出
+/// （A-14。`image_ref` の別名・旧版の端末内コピー・同梱画像は含めない）。
 /// グループは送信しない（A-14）。
 func makeSnapshot(types: [ProductType], inventory: [Product], now: Date) -> Snapshot {
     let publicProducts = inventory.filter { $0.isPublic }
@@ -1344,7 +1345,7 @@ func makeSnapshot(types: [ProductType], inventory: [Product], now: Date) -> Snap
         SnapshotProduct(productId: p.id, typeId: p.typeId, name: p.name,
                         priceJpy: p.priceJpy, priceSats: p.priceSats,
                         attrs: [p.attr1, p.attr2, p.attr3],
-                        stock: p.stock, hasImage: p.hasRuntimeImage)
+                        stock: p.stock, hasImage: p.hasWebImage)
     }
     return Snapshot(createdAt: now, types: usedTypes, products: products)
 }

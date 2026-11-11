@@ -7,4 +7,12 @@
   "kv_namespaces": [
     { "binding": "INVENTORY_KV", "id": "18269a86917943f3a1b26380443f7152" },
   ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "INVENTORY_STORE", "class_name": "InventoryStore" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["InventoryStore"] }
+  ],
 }

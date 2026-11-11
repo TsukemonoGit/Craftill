@@ -1,4 +1,9 @@
 const KEY = "inventory:v1";
+const CREATED_AT_KEY = "created_at";
+// 端末の時計がこの許容幅より未来を指している場合、created_at をサーバー受信時刻に
+// 丸める。未来の時刻を保存すると、以後の正しい送信がすべて Stale になり、
+// 時計を直しても復旧できなくなるため。
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 const STOCK_MODES = new Set(["counted", "unique", "none"]);
 
@@ -57,10 +62,35 @@ export default {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    let body;
+    // 保存時刻の比較と KV への書き込みを単一の Durable Object に集約し、
+    // 並行リクエストで古いスナップショットが新しいものを上書きしないようにする。
+    const id = env.INVENTORY_STORE.idFromName(KEY);
+    return env.INVENTORY_STORE.get(id).fetch(request);
+  },
+};
+
+export class InventoryStore {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+    // Durable Object 内でも await をまたぐとリクエストが interleave するため、
+    // 比較・保存・KV 書き込みを Promise チェーンで直列化する。
+    this.tail = Promise.resolve();
+  }
+
+  async fetch(request) {
+    const body = await request.text();
+    const result = this.tail.then(() => this.ingest(body));
+    this.tail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  async ingest(body) {
     let parsed;
     try {
-      body = await request.text();
       parsed = JSON.parse(body);
     } catch {
       return new Response("Bad Request", { status: 400 });
@@ -70,22 +100,50 @@ export default {
       return new Response("Bad Request", { status: 400 });
     }
 
-         // 保存済みより古いスナップショットでは上書きしない。
-     const stored = await env.INVENTORY_KV.get(KEY);
-     if (stored !== null) {
-       let storedAt = NaN;
-       try {
-         storedAt = Date.parse(JSON.parse(stored).created_at);
-       } catch {
-         // 壊れた保存データは比較せず上書きする。
-       }
-       if (!Number.isNaN(storedAt) && storedAt > Date.parse(parsed.created_at)) {
-         return new Response("Stale", { status: 409 });
+    const now = Date.now();
+    const receivedAt = Date.parse(parsed.created_at);
+    let storedBody = body;
+    let storedAt = receivedAt;
 
-       }
-     }
+    if (receivedAt > now + MAX_FUTURE_SKEW_MS) {
+      parsed.created_at = new Date(now).toISOString();
+      storedBody = JSON.stringify(parsed);
+      storedAt = now;
+    }
 
-    await env.INVENTORY_KV.put(KEY, body);
+    const previousAt = await this.loadStoredAt(now);
+    if (previousAt !== null && previousAt > storedAt) {
+      return new Response("Stale", { status: 409 });
+    }
+
+    // DO の保存時刻を先に確定する。KV 書き込みに失敗しても、同じ内容の再送は
+    // 同じ時刻（またはそれ以降）なので受け付けられる。
+    await this.state.storage.put(CREATED_AT_KEY, new Date(storedAt).toISOString());
+    await this.env.INVENTORY_KV.put(KEY, storedBody);
     return new Response("OK", { status: 200 });
-  },
-};
+  }
+
+  async loadStoredAt(now) {
+    const stored = await this.state.storage.get(CREATED_AT_KEY);
+    if (typeof stored === "string") {
+      const ms = Date.parse(stored);
+      if (Number.isNaN(ms) || ms > now + MAX_FUTURE_SKEW_MS) return null;
+      return ms;
+    }
+
+    // 初回デプロイ時は、それまでの KV の保存時刻を引き継ぐ。
+    // 未来の値が既に入っている場合は、復旧できるように引き継がない。
+    const kv = await this.env.INVENTORY_KV.get(KEY);
+    if (kv === null) return null;
+    try {
+      const parsed = JSON.parse(kv);
+      if (!isDateString(parsed.created_at)) return null;
+      const ms = Date.parse(parsed.created_at);
+      if (Number.isNaN(ms) || ms > now + MAX_FUTURE_SKEW_MS) return null;
+      await this.state.storage.put(CREATED_AT_KEY, new Date(ms).toISOString());
+      return ms;
+    } catch {
+      return null;
+    }
+  }
+}

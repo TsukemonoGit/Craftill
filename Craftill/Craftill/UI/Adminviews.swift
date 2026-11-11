@@ -1754,12 +1754,12 @@ struct ProductRegisteredSheet: View {
             }
             Panel(title: "このあとの手順") {
                 stepRow("1", "QRラベルを印刷して、この商品に貼る")
-                if product.hasRuntimeImage {
+                if product.hasWebImage {
                      stepRow("2", "写真は保存先フォルダに登録済みです（レジの商品タイルに表示されます）")
                 } else {
                     stepRow("2", "商品を編集して「商品写真」から撮影・選択する（あとからでも追加できます）")
                 }
-                if product.hasRuntimeImage {
+                if product.hasWebImage {
                      stepRow("3", "保存先フォルダの \(product.id).jpg を、Webの static/images へコピーする")
                      FieldHelp("Web用は、保存先フォルダの \(product.id).jpg を web/flea-inventory-view/static/images へ手動でコピーしてください。")
                  } else {
@@ -2352,7 +2352,7 @@ struct PriceListView: View {
                         TableRowView(cells: [p.id, p.name], widths: [100, 240])
                     }
                     if vm.productsWithoutImage.isEmpty { Text("なし").foregroundColor(.secondary) }
-                    Text("保存先フォルダに `<商品ID>.jpg` がない商品IDです。先に写真を保存してください。Web用は、ここに載っていない商品の `<商品ID>.jpg` を static/images へコピーしてください。")
+                    Text("保存先フォルダに `<商品ID>.jpg` がない商品IDです。先に写真を保存してください。別名（`image_ref`）で保存されている画像は、保存先フォルダで `<商品ID>.jpg` に名前を変えてからコピーしてください。Web用は、ここに載っていない商品の `<商品ID>.jpg` を static/images へコピーしてください。")
                         .font(.caption).foregroundColor(.secondary)
                 }
             }

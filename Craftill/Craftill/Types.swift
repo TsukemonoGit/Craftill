@@ -112,16 +112,17 @@ struct Product: Codable, Equatable, Identifiable {
 
     /// レジ画面に表示できる画像があるか。
     /// 保存先フォルダの `<商品ID>.jpg` を探す（旧版が同梱した画像もフォールバックで探す）。
-    /// **表示専用。公開サイトへ送る `has_image` には使わない**（`hasRuntimeImage` を使う）。
+    /// **表示専用。公開サイトへ送る `has_image` には使わない**（`hasWebImage` を使う）。
 
     var hasDisplayImage: Bool {
         bundledImageURL(named: bundledImageName) != nil
     }
 
-    /// 公開サイトへ送る `has_image` の判定。保存先フォルダに実ファイルがあるときだけ true。
-    /// 旧版が同梱した画像は含めない（Web 用に static/images へコピーできる実ファイルが対象）。
-    var hasRuntimeImage: Bool {
-        ProductImageStore.hasRuntimeImage(fileName: bundledImageName)
+    /// 公開サイトへ送る `has_image` と、Web 用画像のコピー対象の判定。
+    /// Web は `<商品ID>.jpg` だけを参照するため、`image_ref` の別名ではなく商品IDで探す。
+    /// 保存先フォルダに実ファイルがあるときだけ true（旧版の端末内コピー・同梱画像は含めない）。
+    var hasWebImage: Bool {
+        ProductImageStore.hasExternalImage(fileName: "\(id).jpg")
     }
 }
 
