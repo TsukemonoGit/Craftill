@@ -123,7 +123,7 @@ struct SnapshotSender {
             return
         }
 
-        URLSession.shared.dataTask(with: request) { _, response, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             if let error {
                 completion(.failure(error))
                 return
@@ -133,8 +133,10 @@ struct SnapshotSender {
                 return
             }
             if http.statusCode == 409 {
-                 completion(.failure(SendError.stale))
-                 return
+                 if let data, String(data: data, encoding: .utf8) == "Stale" {
+                     completion(.failure(SendError.stale))
+                     return
+                 }
              }
             guard (200..<300).contains(http.statusCode) else {
                 completion(.failure(SendError.badResponse(http.statusCode)))

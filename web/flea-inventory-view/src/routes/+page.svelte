@@ -187,7 +187,7 @@
 	}
 
 	function showImage(p: SnapProduct): boolean {
-		return p.has_image && !failedImages[p.product_id];
+		return !failedImages[p.product_id];
 	}
 
 	function markImageFailed(productId: string) {

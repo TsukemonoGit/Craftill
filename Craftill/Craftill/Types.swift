@@ -112,8 +112,16 @@ struct Product: Codable, Equatable, Identifiable {
 
     /// レジ画面に表示できる画像があるか。
     /// 保存先フォルダの `<商品ID>.jpg` を探す（旧版が同梱した画像もフォールバックで探す）。
+    /// **表示専用。公開サイトへ送る `has_image` には使わない**（`hasRuntimeImage` を使う）。
+
     var hasDisplayImage: Bool {
         bundledImageURL(named: bundledImageName) != nil
+    }
+
+    /// 公開サイトへ送る `has_image` の判定。保存先フォルダに実ファイルがあるときだけ true。
+    /// 旧版が同梱した画像は含めない（Web 用に static/images へコピーできる実ファイルが対象）。
+     var hasRuntimeImage: Bool {
+        ProductImageStore.hasRuntimeImage(fileName: bundledImageName)
     }
 }
 
@@ -291,7 +299,7 @@ struct SnapshotProduct: Codable, Equatable {
     let priceSats: Int?        // 空の場合あり
     let attrs: [String?]       // 項目の並びは attrLabels に合わせる
     let stock: Int?            // 在庫管理なし型は nil
-    let hasImage: Bool         // 保持項目ではない。保存先フォルダの実ファイル（旧版は同梱画像）から導出する（A-14）
+    let hasImage: Bool         // 保持項目ではない。保存先フォルダの実ファイルの有無から導出する（A-14）。同梱画像は含めない
 }
 
 struct Snapshot: Codable, Equatable {

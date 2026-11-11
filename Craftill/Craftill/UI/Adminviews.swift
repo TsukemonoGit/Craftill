@@ -2512,6 +2512,14 @@ struct SyncView: View {
                     Text("会計・販売取消・在庫調整・商品編集などのあと、最後の変更から約10秒待って1回だけ送信します。通信できないときは、回復後に送ります。手動送信はいつでもできます。")
                         .font(.caption).foregroundColor(.secondary)
                 }
+                 if vm.staleRejected {
+                     Text("サイト側に反映されていない変更があります。サイト側により新しいデータがあると判定されました。端末の時計を確認し、直したあとに「公開サイトへ送信」で手動送信してください。")
+                         .font(.callout)
+                         .foregroundColor(.orange)
+                         .padding(12)
+                         .frame(maxWidth: .infinity, alignment: .leading)
+                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.1)))
+                 }
                 if compact {
                     VStack(spacing: 10) {
                         InfoBox(text: "通信: \(vm.isOnline ? "あり" : "なし")　／　最終送信: \(Fmt.time(vm.lastSyncAt))", size: 14, bold: false)
