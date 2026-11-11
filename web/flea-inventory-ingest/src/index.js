@@ -1,4 +1,22 @@
 const KEY = "inventory:v1";
+// 新しい保存順序のキー。旧版は created_at を文字列で保存していたため、
+// 初回はそちらから引き継ぐ。引き継げない場合は /init で明示的に初期化する。
+const ORDER_KEY = "snapshot_order";
+const LEGACY_CREATED_AT_KEY = "created_at";
+
+// 端末の時計がこの許容幅より未来を指している場合、created_at をサーバー受信時刻に
+// 丸める。未来の時刻を保存すると、以後の正しい送信がすべて Stale になり、
+// 時計を直しても復旧できなくなるため。
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+// 移行時に順序の初期値として受け付けるスナップショットの最大経過時間。
+// アプリの自動再送の最大間隔（300秒）に合わせる。KV の反映遅延で初期値が
+// 実際より古くなっても、これより古い遅延送信で在庫を巻き戻さないため。
+const MAX_SEND_AGE_MS = 5 * 60 * 1000;
+
+// KV 書き込みが 429・5xx などで失敗したときの再試行間隔。
+// Durable Object 内で待つので、リクエストはその間ブロックされる（直列化は維持される）。
+const KV_RETRY_DELAYS_MS = [200, 500, 1000];
 
 const STOCK_MODES = new Set(["counted", "unique", "none"]);
 
@@ -8,6 +26,7 @@ const isString = (v) => typeof v === "string";
 const isInt = (v) => Number.isInteger(v);
 const isOptional = (v, check) => v === undefined || v === null || check(v);
 const isDateString = (v) => isString(v) && !Number.isNaN(Date.parse(v));
+const isRevision = (v) => isInt(v) && v >= 0;
 
 const isValidType = (t) =>
   isPlainObject(t) &&
@@ -32,6 +51,8 @@ const isValidProduct = (p) =>
 const isValidSnapshot = (s) => {
   if (!isPlainObject(s)) return false;
   if (!isDateString(s.created_at)) return false;
+  // revision は旧版の端末が送らないため任意。無い場合は 0 として扱う。
+  if (!isOptional(s.revision, isRevision)) return false;
   if (!Array.isArray(s.types) || !s.types.every(isValidType)) return false;
   if (!Array.isArray(s.products) || !s.products.every(isValidProduct)) {
     return false;
@@ -40,10 +61,48 @@ const isValidSnapshot = (s) => {
   return s.products.every((p) => typeIds.has(p.type_id));
 };
 
+const revisionOf = (s) => (isRevision(s.revision) ? s.revision : 0);
+
+// 保存済みの順序が受信した順序より新しいか。
+// 同じ (時刻, revision) は再送とみなして受け付ける。
+const isStoredNewer = (stored, incoming) =>
+  stored.at > incoming.at ||
+  (stored.at === incoming.at && stored.revision > incoming.revision);
+
+// 待機は scheduler.wait を使う（Workers/DO の公式API）。
+// ローカルテストなど scheduler が無い環境では、あれば setTimeout、無ければ即時解決。
+const sleep = (ms) => {
+  if (typeof scheduler !== "undefined" && typeof scheduler.wait === "function") {
+    return scheduler.wait(ms);
+  }
+  return new Promise((resolve) => {
+    if (typeof setTimeout === "function") setTimeout(resolve, ms);
+    else resolve();
+  });
+};
+
+// KV バインディングのエラーが一時的か。429・5xx と接続断だけ再試行する。
+// Cloudflare は "Network connection lost" などを一時的な接続障害として扱い、
+// バインディング呼び出しの再試行を案内している。
+const isRetryableKvError = (error) => {
+  const status = error && (error.status || error.statusCode);
+  if (typeof status === "number") return status === 429 || status >= 500;
+  const message = String((error && error.message) || error || "");
+  return (
+    /\b(429|5\d\d)\b/.test(message) ||
+    /rate limit|too many requests|timeout|timed out|unavailable|internal error|network connection lost|connection (?:reset|lost|refused|closed)|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(
+      message
+    )
+  );
+};
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname !== "/ingest" || request.method !== "POST") {
+    const isIngest = url.pathname === "/ingest" && request.method === "POST";
+    // 移行時だけ使う順序の初期化。通常の送信とは別に、運用者が明示的に呼ぶ。
+    const isInit = url.pathname === "/init" && request.method === "POST";
+    if (!isIngest && !isInit) {
       return new Response("Not Found", { status: 404 });
     }
 
@@ -57,20 +116,247 @@ export default {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    let body;
-    let parsed;
-    try {
-      body = await request.text();
-      parsed = JSON.parse(body);
-    } catch {
-      return new Response("Bad Request", { status: 400 });
-    }
-
-    if (!isValidSnapshot(parsed)) {
-      return new Response("Bad Request", { status: 400 });
-    }
-
-    await env.INVENTORY_KV.put(KEY, body);
-    return new Response("OK", { status: 200 });
+    // 保存順序の比較と KV への書き込みを単一の Durable Object に集約し、
+    // 並行リクエストで古いスナップショットが新しいものを上書きしないようにする。
+    const id = env.INVENTORY_STORE.idFromName(KEY);
+    return env.INVENTORY_STORE.get(id).fetch(request);
   },
 };
+
+export class InventoryStore {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+    // Durable Object 内でも await をまたぐとリクエストが interleave するため、
+    // 比較・保存・KV 書き込みを Promise チェーンで直列化する。
+    this.tail = Promise.resolve();
+  }
+
+  async fetch(request) {
+    const path = new URL(request.url).pathname;
+    const body = await request.text();
+    const run =
+      path === "/init" ? () => this.initialize(body) : () => this.ingest(body);
+    const result = this.tail.then(run);
+    this.tail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    return result;
+  }
+
+  // 受信した JSON を検証し、未来すぎる created_at を丸めた保存用の値を返す。
+  // 不正なら null。
+  parseSnapshot(body) {
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return null;
+    }
+    if (!isValidSnapshot(parsed)) return null;
+
+    const now = Date.now();
+    const receivedAt = Date.parse(parsed.created_at);
+    let storedBody = body;
+    let storedAt = receivedAt;
+
+    if (receivedAt > now + MAX_FUTURE_SKEW_MS) {
+      parsed.created_at = new Date(now).toISOString();
+      storedBody = JSON.stringify(parsed);
+      storedAt = now;
+    }
+
+    return {
+      now,
+      storedBody,
+      incoming: { at: storedAt, revision: revisionOf(parsed) },
+    };
+  }
+
+  async ingest(body) {
+    const prepared = this.parseSnapshot(body);
+    if (prepared === null) {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    const previous = await this.loadOrderOrRetry(prepared.now, true);
+    if (previous === undefined) {
+      return new Response("Storage Unavailable", { status: 503 });
+    }
+    if (previous !== null && isStoredNewer(previous, prepared.incoming)) {
+      return new Response("Stale", { status: 409 });
+    }
+
+    return this.commit(previous, prepared.incoming, prepared.storedBody);
+  }
+
+  // 復旧用。運用者が確認したスナップショットで順序を初期化する。
+  // 既に順序がある場合は、それより古いスナップショットを受け付けない。
+  async initialize(body) {
+    const prepared = this.parseSnapshot(body);
+    if (prepared === null) {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    const previous = await this.loadOrderOrRetry(prepared.now, false);
+    if (previous === undefined) {
+      return new Response("Storage Unavailable", { status: 503 });
+    }
+    if (previous !== null) {
+      if (isStoredNewer(previous, prepared.incoming)) {
+        return new Response("Stale", { status: 409 });
+      }
+    } else {
+      // 順序が無い場合でも、KV に公開済みの値より古いスナップショットでは
+      // 初期化しない。KV が読めない・壊れている場合は復旧を優先して受け付ける。
+      let published = null;
+      try {
+        published = await this.readPublishedOrder(prepared.now);
+      } catch {
+        published = null;
+      }
+      if (published !== null && isStoredNewer(published, prepared.incoming)) {
+        return new Response("Stale", { status: 409 });
+      }
+    }
+
+    return this.commit(previous, prepared.incoming, prepared.storedBody);
+  }
+
+  // 順序を読めなかった場合は undefined。KV が一時的に読めないだけで、
+  // 再送すれば成功しうるため、古いスナップショットを基準なしで受け入れない。
+  // /init は運用者が明示的に初期化するので、KV からの自動初期化は行わない。
+  async loadOrderOrRetry(now, allowBootstrap) {
+    try {
+      return await (allowBootstrap
+        ? this.loadStoredOrder(now)
+        : this.loadPersistedOrder(now));
+    } catch {
+      return undefined;
+    }
+  }
+
+  // 先に順序を確定してから KV を書く。KV が失敗したら順序を元に戻す。
+  // 戻さないと、KV に入っていない順序が保存済みとして残り、再送が
+  // 409 になったり、古い内容が採用されたりする。
+  async commit(previous, incoming, storedBody) {
+    await this.state.storage.put(ORDER_KEY, incoming);
+    try {
+      await this.putKvWithRetry(storedBody);
+    } catch {
+      try {
+        if (previous === null) {
+          await this.state.storage.delete(ORDER_KEY);
+        } else {
+          await this.state.storage.put(ORDER_KEY, previous);
+        }
+      } catch {
+        // ロールバックにも失敗した場合でも KV は変わっていない。
+        // 同じスナップショットの再送は同じ順序なので受け付けられる。
+      }
+      return new Response("Storage Unavailable", { status: 503 });
+    }
+    return new Response("OK", { status: 200 });
+  }
+
+  async putKvWithRetry(body) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.env.INVENTORY_KV.put(KEY, body);
+        return;
+      } catch (error) {
+        if (attempt >= KV_RETRY_DELAYS_MS.length || !isRetryableKvError(error)) {
+          throw error;
+        }
+        await sleep(KV_RETRY_DELAYS_MS[attempt]);
+      }
+    }
+  }
+
+  // 保存済みの順序を返す。無ければ KV の最後の公開値から一度だけ初期化する。
+  // KV は反映が遅れるため毎回の比較には使わない。古い KV 値を毎回基準にすると、
+  // その値と実際の保存値の間のスナップショットを受け入れてしまい、
+  // 新しい公開在庫を上書きするおそれがある。
+  async loadStoredOrder(now) {
+    const order = await this.loadPersistedOrder(now);
+    if (order !== null) return order;
+    return this.bootstrapOrder(now);
+  }
+
+  // DO に保存済みの順序、または旧版が DO に残した値から順序を返す。
+  // どちらも無ければ null。KV は読まない（/init の明示的な初期化用）。
+  async loadPersistedOrder(now) {
+    const stored = await this.state.storage.get(ORDER_KEY);
+    const order = this.toOrder(stored, now);
+    if (order !== null) return order;
+    if (stored !== undefined && stored !== null) {
+      // 未来時刻など引き継げない値は捨てて、下の経路で復旧する。
+      await this.state.storage.delete(ORDER_KEY);
+    }
+
+    // 旧版の DO 保存値（created_at の文字列）。DO の storage は強整合なので、
+    // これを移行の基準にする。revision が無いので -1 とする。
+    const legacy = await this.state.storage.get(LEGACY_CREATED_AT_KEY);
+    if (typeof legacy === "string") {
+      const ms = Date.parse(legacy);
+      if (!Number.isNaN(ms) && ms <= now + MAX_FUTURE_SKEW_MS) {
+        const migrated = { at: ms, revision: -1 };
+        await this.state.storage.put(ORDER_KEY, migrated);
+        return migrated;
+      }
+    }
+
+    return null;
+  }
+
+  // 順序が無い DO の一度だけの初期化。
+  // 旧版は順序を KV に保存していたため、切り替え前の最後の公開値をここで読む。
+  // 毎回の比較に KV を使うと反映遅延で誤判定するが、初期値として一度だけ
+  // 読むのは、切り替え前より古いスナップショットを受け付けないため。
+  // 以降の比較と保存は DO の保存値だけで行う。
+  async bootstrapOrder(now) {
+    // 読めない場合は例外を投げ、呼び出し側で 503（再送）にする。
+    const published = await this.readPublishedOrder(now);
+
+    let at = published === null ? -Infinity : published.at;
+    let revision = published === null ? -1 : published.revision;
+
+    // KV の反映は遅れるため、KV の値が実際の最新より古いことがある。
+    // その間に遅延した再送を受け入れて在庫を巻き戻さないよう、
+    // 直近に送られたはずのスナップショットだけを初期化の起点にする。
+    const oldestAccepted = now - MAX_SEND_AGE_MS;
+    if (at < oldestAccepted) {
+      at = oldestAccepted;
+      revision = -1;
+    }
+
+    const order = { at, revision };
+    await this.state.storage.put(ORDER_KEY, order);
+    return order;
+  }
+
+  // KV に公開されている最後のスナップショットの順序。空・壊れている・未来なら null。
+  // KV の読み取り自体に失敗した場合は例外を投げる。
+  async readPublishedOrder(now) {
+    const stored = await this.env.INVENTORY_KV.get(KEY);
+    if (stored === null || stored === undefined) return null;
+    try {
+      const parsed = JSON.parse(stored);
+      const at = Date.parse(parsed.created_at);
+      if (!Number.isFinite(at) || at > now + MAX_FUTURE_SKEW_MS) return null;
+      // 同じ created_at の遅延送信を弾けるよう、公開済みの revision も引き継ぐ。
+      return { at, revision: isRevision(parsed.revision) ? parsed.revision : -1 };
+    } catch {
+      // 壊れた保存データは基準にしない。
+      return null;
+    }
+  }
+
+  toOrder(value, now) {
+    if (!isPlainObject(value)) return null;
+    const at = typeof value.at === "number" ? value.at : Date.parse(value.at);
+    if (!Number.isFinite(at) || at > now + MAX_FUTURE_SKEW_MS) return null;
+    return { at, revision: isRevision(value.revision) ? value.revision : -1 };
+  }
+}

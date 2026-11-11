@@ -1329,9 +1329,11 @@ func setRefunded(saleId: String, value: Bool = true,
 
 // @section: snapshot
 /// 送信スナップショットを作る。**`image_ref` は含めない**。
-/// `has_image` は保存先フォルダまたは同梱画像の実在から導出（A-14）。
+/// `has_image` は保存先フォルダの `<商品ID>.jpg` の実在のみから導出
+/// （A-14。`image_ref` の別名・旧版の端末内コピー・同梱画像は含めない）。
 /// グループは送信しない（A-14）。
-func makeSnapshot(types: [ProductType], inventory: [Product], now: Date) -> Snapshot {
+func makeSnapshot(types: [ProductType], inventory: [Product], now: Date,
+                  revision: Int) -> Snapshot {
     let publicProducts = inventory.filter { $0.isPublic }
     let usedTypeIDs = Set(publicProducts.map { $0.typeId })
     let usedTypes = types
@@ -1344,9 +1346,9 @@ func makeSnapshot(types: [ProductType], inventory: [Product], now: Date) -> Snap
         SnapshotProduct(productId: p.id, typeId: p.typeId, name: p.name,
                         priceJpy: p.priceJpy, priceSats: p.priceSats,
                         attrs: [p.attr1, p.attr2, p.attr3],
-                        stock: p.stock, hasImage: p.hasDisplayImage)
+                        stock: p.stock, hasImage: p.hasWebImage)
     }
-    return Snapshot(createdAt: now, types: usedTypes, products: products)
+    return Snapshot(createdAt: now, revision: revision, types: usedTypes, products: products)
 }
 
 /// 送信の成否を `sync_log` に記録する（A-14）。**失敗しても会計・在庫には影響させない**。

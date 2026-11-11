@@ -161,6 +161,8 @@ final class AppViewModel: ObservableObject {
     @Published var lastSyncAt: Date? = nil
     @Published var syncEndpoint = SyncSettings.endpoint
     @Published var syncToken = SyncSettings.token
+    /// 変更後の自動送信（全体設定）。会計ごとのチェックボックスは持たない。
+    @Published var autoSendEnabled = SyncSettings.autoSend
     /// QRラベル画面で、直前に登録した商品だけを表示するためのID。
     /// 商品登録直後の「QRを印刷」導線で使う。他の画面へ移ると解除する。
     @Published var qrFocusProductId: String? = nil
@@ -187,6 +189,31 @@ final class AppViewModel: ObservableObject {
     private var pendingSatsMove: Move?
     private let pathMonitor = NWPathMonitor()
     private let pathQueue = DispatchQueue(label: "dev.craftill.network-monitor")
+    /// 変更をまとめて自動送信するまでの待ち時間（最後の変更から）。
+    private static let autoSendDelay: TimeInterval = 10
+    /// 自動送信が一時的に失敗したときの再試行間隔（秒）。末尾の値で頭打ちにする。
+    private static let autoRetryDelays: [TimeInterval] = [15, 30, 60, 120, 300]
+    private var autoSendTask: DispatchWorkItem?
+    /// 一時的な送信失敗後に予約した再送。
+    private var autoRetryTask: DispatchWorkItem?
+    /// 連続失敗回数。再試行間隔の選択に使う。
+    private var autoRetryAttempt = 0
+    /// 商品マスタを正常に読み込めたか。読めていない間は空のスナップショットを
+    /// 送って公開在庫を消さないよう、自動送信を保留する。
+    private var isMasterLoaded = false
+    /// 送信中か。並行送信を防ぎ、古いスナップショットが後から届くのを避ける。
+    private var isSending = false
+    /// 未送信の変更があるか。通信回復時・起動時に送る。UserDefaults に保存する。
+     private var pendingAutoSend = SyncSettings.pendingAutoSend {
+         didSet { SyncSettings.pendingAutoSend = pendingAutoSend }
+     }
+     /// 変更のたびに増える。送信完了時に、送信中に新しい変更が入っていないか判定する。
+     private var changeGeneration = 0
+    /// サイト側に拒否された未反映の変更があるか。画面から参照して表示できる。
+     @Published private(set) var staleRejected = SyncSettings.staleRejected {
+         didSet { SyncSettings.staleRejected = staleRejected }
+     }
+
 
     init() {
         pin = PinStore.load()
@@ -201,9 +228,21 @@ final class AppViewModel: ObservableObject {
         // A-10: OS の接続状態を購読する。手動トグルは廃止。
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
-            DispatchQueue.main.async { self?.isOnline = online }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let wasOnline = self.isOnline
+                self.isOnline = online
+                // オフライン中に保留した変更は、通信が戻ったらまとめて送る。
+                if online && !wasOnline && self.pendingAutoSend {
+                    self.requestAutoSend()
+                }
+            }
         }
         pathMonitor.start(queue: pathQueue)
+
+        // 前回終了時に未送信だった変更があれば送る。
+        // 商品マスタを読めていないときは、空のスナップショットを送らないよう保留する。
+         if pendingAutoSend && isMasterLoaded { requestAutoSend() }
 
         // 会計状態は更新のたびに保存する（A-3）。willChange の直後に読む。
         objectWillChange
@@ -216,10 +255,13 @@ final class AppViewModel: ObservableObject {
 
     deinit {
         pathMonitor.cancel()
+        autoSendTask?.cancel()
+        autoRetryTask?.cancel()
     }
 
     private func loadMaster() {
         guard let db else {
+            isMasterLoaded = false
             message = "データベースを開けませんでした"
             return
         }
@@ -233,7 +275,9 @@ final class AppViewModel: ObservableObject {
             syncLog = try db.loadSyncLog()
             lastSyncAt = syncLog.last?.at
             selectedTypeId = types.first?.typeId ?? ""
+            isMasterLoaded = true
         } catch {
+            isMasterLoaded = false
             message = "データの読み込みに失敗しました: \(error.localizedDescription)"
         }
     }
@@ -853,6 +897,7 @@ final class AppViewModel: ObservableObject {
         #else
         message = "全データを初期化しました"
         #endif
+        requestAutoSend()
     }
 
     /// 会計（販売・明細・販売に伴う在庫変動）を削除する。
@@ -903,6 +948,7 @@ final class AppViewModel: ObservableObject {
         ids = Self.makeSequencer(sales: sales, movements: movements,
                                  syncLog: syncLog, cart: [])
         message = parts.joined(separator: "\n")
+        requestAutoSend()
     }
 
     /// 在庫だけを初期登録時の数量へ戻す。販売履歴は残す。
@@ -919,6 +965,7 @@ final class AppViewModel: ObservableObject {
         } else {
             message = "在庫 \(result.changed)件を初期データへ戻しました"
         }
+        requestAutoSend()
     }
 
     /// 商品ごとの初期在庫（`reason = initial` の合計）へ現在庫を戻す。
@@ -1050,6 +1097,7 @@ final class AppViewModel: ObservableObject {
             message = "在庫のある商品がないため、テスト会計を追加できませんでした"
         } else {
             message = "テスト会計を \(added)件追加しました（売上・在庫に反映済み）"
+            requestAutoSend()
         }
     }
 
@@ -1104,6 +1152,7 @@ final class AppViewModel: ObservableObject {
                             totalSats: sale.totalSats, cashPart: sale.totalJpy,
                             received: sale.receivedJpy, change: sale.changeJpy)
             clearActiveSale()
+            requestAutoSend()
         }
     }
 
@@ -1185,6 +1234,7 @@ final class AppViewModel: ObservableObject {
             sales = allSales
             ids = seq
             message = memo.isEmpty ? "販売取消: \(id)" : "販売取消: \(id)\n" + memo.joined(separator: "\n")
+            requestAutoSend()
         }
     }
 
@@ -1236,6 +1286,7 @@ final class AppViewModel: ObservableObject {
             inventory = inv
             movements = mov
             ids = seq
+            requestAutoSend()
             return nil
         }
     }
@@ -1318,6 +1369,7 @@ final class AppViewModel: ObservableObject {
                 return "種類を保存できませんでした: \(error.localizedDescription)"
             }
             types = updated
+            requestAutoSend()
             return nil
         }
     }
@@ -1372,6 +1424,7 @@ final class AppViewModel: ObservableObject {
             return "種類を保存できませんでした: \(error.localizedDescription)"
         }
         types[i] = updated
+        requestAutoSend()
         return nil
     }
 
@@ -1416,6 +1469,7 @@ final class AppViewModel: ObservableObject {
             types = allTypes
             movements = mov
             ids = seq
+            requestAutoSend()
             return nil
         }
     }
@@ -1445,6 +1499,7 @@ final class AppViewModel: ObservableObject {
                 return "商品を保存できませんでした: \(error.localizedDescription)"
             }
             inventory = updated
+            requestAutoSend()
             return nil
         }
     }
@@ -1482,7 +1537,12 @@ final class AppViewModel: ObservableObject {
         }
 
         inventory = updated
-        message = "sats価格を \(changed.count)件更新しました（\(satsBulkSummary(changed))）。公開サイトへ反映するには送信してください。"
+        if autoSendEnabled {
+            message = "sats価格を \(changed.count)件更新しました（\(satsBulkSummary(changed))）。公開サイトへ自動送信します。"
+        } else {
+            message = "sats価格を \(changed.count)件更新しました（\(satsBulkSummary(changed))）。公開サイトへ反映するには送信してください。"
+        }
+        requestAutoSend()
         return nil
     }
 
@@ -1498,9 +1558,11 @@ final class AppViewModel: ObservableObject {
         return text
     }
 
-    /// 画像ファイルが同梱されていない登録商品（A-1）。
-    /// `image_ref` の有無ではなく、バンドル内に実ファイルがあるかで判定する。
-    var productsWithoutImage: [Product] { inventory.filter { !$0.hasBundledImage } }
+    /// 保存先フォルダに Web 用の `<商品ID>.jpg` がない登録商品（A-1）。
+     /// Web は商品IDのファイル名だけを参照するため、`image_ref` の別名や表示用
+     /// フォールバック（旧版の端末内コピー・同梱画像）は含めず、
+     /// 保存先フォルダの `<商品ID>.jpg` の実ファイルだけで判定する。
+     var productsWithoutImage: [Product] { inventory.filter { !$0.hasWebImage } }
 
     // MARK: CSV取り込み（A-1 / P4）
 
@@ -1569,6 +1631,7 @@ final class AppViewModel: ObservableObject {
             parts.append("在庫上書き \(plan.stockDiffs.count)件")
         }
         message = parts.joined(separator: " / ")
+        requestAutoSend()
         return []
     }
 
@@ -1794,6 +1857,11 @@ final class AppViewModel: ObservableObject {
     func saveSyncSettings(endpoint newEndpoint: String? = nil,
                           newToken: String? = nil) -> Bool {
         let endpoint = (newEndpoint ?? syncEndpoint).trimmingCharacters(in: .whitespacesAndNewlines)
+        // トークンを平文で送らないよう HTTPS のみ許可する（CWE-319）。
+        if !endpoint.isEmpty && Self.syncURL(from: endpoint) == nil {
+            message = "送信先は https:// で始まるURLを指定してください"
+            return false
+        }
         if let newToken {
             let token = newToken.trimmingCharacters(in: .whitespacesAndNewlines)
             guard SyncSettings.saveToken(token) else {
@@ -1805,6 +1873,7 @@ final class AppViewModel: ObservableObject {
         SyncSettings.endpoint = endpoint
         syncEndpoint = endpoint
         message = "送信先を保存しました"
+        if autoSendEnabled { requestAutoSend() }
         return true
     }
 
@@ -1820,37 +1889,191 @@ final class AppViewModel: ObservableObject {
         return deleted
     }
 
+    /// 自動送信のON/OFFを保存する。ONに戻したとき、保留中の変更があれば送る。
+    func setAutoSendEnabled(_ enabled: Bool) {
+        autoSendEnabled = enabled
+        SyncSettings.autoSend = enabled
+        if enabled {
+            if pendingAutoSend { requestAutoSend() }
+        } else {
+            cancelScheduledAutoSend()
+            cancelAutoRetry(reset: true)
+        }
+    }
+
+    /// データ変更後に呼ぶ。最後の変更から少し待ち、まとめて1回だけ送る。
+    /// 送信先が未設定のときは何もしない（操作を妨げない）。
+    func requestAutoSend() {
+        changeGeneration += 1
+        pendingAutoSend = true
+        guard autoSendEnabled else { return }
+        // マスタを読めていない間に送ると、空のスナップショットで公開在庫を消す。
+        guard isMasterLoaded else { return }
+        let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty, Self.syncURL(from: endpoint) != nil else { return }
+        cancelScheduledAutoSend()
+        // 新しい変更が入ったので、待ち時間や再試行回数はやり直す。
+        cancelAutoRetry(reset: true)
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.autoSendTask = nil
+            self.sendSnapshot(automatic: true)
+        }
+        autoSendTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoSendDelay, execute: task)
+    }
+
+    private func cancelScheduledAutoSend() {
+        autoSendTask?.cancel()
+        autoSendTask = nil
+    }
+
+    /// 予約済みの自動再送を取り消す。`reset` は連続失敗回数も戻す。
+    private func cancelAutoRetry(reset: Bool = false) {
+        autoRetryTask?.cancel()
+        autoRetryTask = nil
+        if reset { autoRetryAttempt = 0 }
+    }
+
+    /// 一時的な失敗のあと、間隔を空けて自動再送する。
+    /// オフラインのときは通信回復時の送信に任せる。
+    private func scheduleAutoRetry() {
+        guard autoSendEnabled, isMasterLoaded, pendingAutoSend, isOnline else { return }
+        let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty, Self.syncURL(from: endpoint) != nil else { return }
+        cancelAutoRetry()
+        let index = min(autoRetryAttempt, Self.autoRetryDelays.count - 1)
+        let delay = Self.autoRetryDelays[index]
+        autoRetryAttempt += 1
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.autoRetryTask = nil
+            guard self.autoSendEnabled, self.isMasterLoaded, self.pendingAutoSend else { return }
+            self.sendSnapshot(automatic: true)
+        }
+        autoRetryTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
+    }
+
+    /// 送信先として使えるURLか。Bearer トークンを平文で送らないよう HTTPS のみ許可する。
+    private static func syncURL(from endpoint: String) -> URL? {
+        guard let url = URL(string: endpoint),
+              url.scheme?.lowercased() == "https",
+              let host = url.host,
+              !host.isEmpty else { return nil }
+        return url
+    }
+
+    /// 待ってから再送すれば成功する可能性があるか。
+    private static func isRetryableSyncError(_ error: Error) -> Bool {
+        if let sendError = error as? SnapshotSender.SendError {
+            return sendError.isRetryable
+        }
+        if error is EncodingError { return false }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return false }
+        return true
+    }
+
     /// 実際にスナップショットを送信する。成功ログは HTTP 2xx のときだけ残す。
     /// 失敗しても会計・在庫には影響させない（A-14）。
-    func sendSnapshot() {
-        let snapshot = makeSnapshot(types: types, inventory: inventory, now: Date())
+    /// - Parameter automatic: 変更後の自動送信。オフラインなら保留し、通信回復後に送る。
+    func sendSnapshot(automatic: Bool = false) {
+        if isSending {
+             if automatic {
+                 // 送信完了後に、新しい変更分を送る。
+                 pendingAutoSend = true
+             } else {
+                 message = "送信中です。完了後にもう一度お試しください"
+             }
+             return
+         }
+        // マスタを読めていない状態で送ると、空のスナップショットで公開在庫を消す。
+        // 予約済みの再送は、実際に送る直前まで取り消さない（早期リターンで失わないように）。
+        guard isMasterLoaded else {
+            if automatic {
+                pendingAutoSend = true
+            } else {
+                message = "商品データを読み込めていないため送信できません。アプリを再起動してください"
+            }
+            return
+        }
+        let generation = changeGeneration
+        let snapshot = makeSnapshot(types: types, inventory: inventory, now: Date(),
+                                    revision: SyncSettings.nextRevision())
 
         let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !endpoint.isEmpty else {
-            recordSyncResult(snapshot: snapshot, error: "送信先が未設定です（送信先URLを保存してください）")
+            if automatic { pendingAutoSend = true }
+            else { recordSyncResult(snapshot: snapshot, error: "送信先が未設定です（送信先URLを保存してください）") }
             return
         }
-        guard let url = URL(string: endpoint), url.scheme != nil else {
-            recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です")
+        guard let url = Self.syncURL(from: endpoint) else {
+            if automatic { pendingAutoSend = true }
+            else { recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です（https:// で指定してください）") }
             return
         }
         guard isOnline else {
-            recordSyncResult(snapshot: snapshot, error: "通信エラー（オフライン）")
+            if automatic {
+                pendingAutoSend = true
+            } else {
+                recordSyncResult(snapshot: snapshot, error: "通信エラー（オフライン）")
+            }
             return
         }
 
-        message = "送信中…"
+        if !automatic { message = "送信中…" }
+        // 実際に送る直前に、予約済みの再送を取り消す（失敗時に改めて予約する）。
+        cancelAutoRetry()
+        isSending = true
         let sender = SnapshotSender(endpoint: url, token: syncToken)
         sender.send(snapshot) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.isSending = false
                 switch result {
                 case .success:
+                    self.staleRejected = false
+                    self.cancelAutoRetry(reset: true)
+                    // 送信中に新しい変更が入っていた場合は、保留を残す。
+                    if self.changeGeneration == generation {
+                        self.pendingAutoSend = false
+                    }
                     self.recordSyncResult(snapshot: snapshot, error: nil)
-                    self.message = "公開サイトへ送信しました（商品 \(snapshot.products.count)件）"
+                    self.message = automatic
+                        ? "公開サイトへ自動送信しました（商品 \(snapshot.products.count)件）"
+                        : "公開サイトへ送信しました（商品 \(snapshot.products.count)件）"
+                    // 送信中に入った変更を送る。
+                    if self.pendingAutoSend { self.requestAutoSend() }
                 case .failure(let error):
+                    var isStale = false
+                     if case SnapshotSender.SendError.stale = error { isStale = true }
+                     if isStale {
+                         // 同じ内容を再送しても同じ結果になるため、保留を下ろす。
+                         // 送信中に新しい変更が入っていた場合は残す。
+                         if self.changeGeneration == generation { self.pendingAutoSend = false }
+                         // 手動送信で再送できるよう、未反映として記録する。
+                         self.staleRejected = true
+                         self.cancelAutoRetry(reset: true)
+                     } else {
+                         if automatic { self.pendingAutoSend = true }
+                         // 自動送信が有効で未反映の変更が残っているなら、手動送信が
+                         // 一時的なエラーで失敗した場合も自動で再送する。
+                         if self.autoSendEnabled,
+                            self.pendingAutoSend,
+                            Self.isRetryableSyncError(error) {
+                             self.scheduleAutoRetry()
+                         } else {
+                             self.cancelAutoRetry(reset: true)
+                         }
+                     }
                     self.recordSyncResult(snapshot: snapshot, error: error.localizedDescription)
-                    self.message = "送信に失敗しました: \(error.localizedDescription)"
+                    self.message = isStale
+                         ? "送信に失敗しました: \(error.localizedDescription)\n端末の時計を確認し、直したあとに手動で送信してください"
+                         : "送信に失敗しました: \(error.localizedDescription)"
+                     // 送信中に入った変更の予約が isSending で捨てられていた場合に備え、再予約する。
+                     if self.pendingAutoSend && self.changeGeneration != generation {
+                         self.requestAutoSend()
+                     }
                 }
             }
         }

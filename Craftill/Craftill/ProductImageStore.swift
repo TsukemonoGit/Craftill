@@ -8,7 +8,8 @@ import UniformTypeIdentifiers
 //
 // カメラ撮影・写真ライブラリ・ファイル選択のどれも同じ経路で保存する。
 // 保存先は写真追加の前に必ず選ぶ外部フォルダ（originals/ など）だけ。
-// ウェブサイトの画像ビルド（scripts/build_images.py）がそのフォルダを読む。
+// ウェブサイト用画像は、このフォルダの <商品ID>.jpg を
+// web/flea-inventory-view/static/images へ手動でコピーする。
 // 旧版が Application Support に残したコピーは読み取り専用で残し、
 // 「画像の保存先」画面から新しいフォルダへまとめて書き出せる。
 // ════════════════════════════════════════════════════════════
@@ -75,7 +76,17 @@ enum ProductImageStore {
         displayURL(fileName: fileName) != nil
     }
 
+    /// 保存先フォルダに実ファイルがあるか。旧版のアプリ内コピーは含めない。
+    /// Web 用に `static/images` へコピーできる画像かどうかの判定に使う。
+    static func hasExternalImage(fileName: String) -> Bool {
+        guard !fileName.isEmpty, let external = externalURL(fileName: fileName) else {
+            return false
+        }
+        return FileManager.default.fileExists(atPath: external.path)
+    }
+
     /// 外部フォルダまたは旧版のアプリ内コピーに実体があるか（同梱画像は含めない）。
+    /// レジ表示・削除可否の判定用。Web 用にコピーできるかは `hasExternalImage` で判定する。
     static func hasRuntimeImage(fileName: String) -> Bool {
         guard !fileName.isEmpty else { return false }
         if let external = externalURL(fileName: fileName),
