@@ -104,14 +104,12 @@ struct SnapshotSender {
         case badResponse(Int)
         case emptyResponse
         case stale
-        case notInitialized
 
         var errorDescription: String? {
             switch self {
             case .badResponse(let code): return "HTTP \(code)"
             case .emptyResponse: return "応答が空です"
             case .stale: return "サイト側により新しいデータがあります（端末の時計のずれの可能性）"
-            case .notInitialized: return "受信側が初期化されていません（移行手順を確認してください）"
 
             }
         }
@@ -126,9 +124,6 @@ struct SnapshotSender {
                 return true
             case .stale:
                 return false
-            case .notInitialized:
-                // 受信側の初期化作業が終われば成功する。
-                return true
             }
         }
     }
@@ -177,12 +172,6 @@ struct SnapshotSender {
                      return
                  }
              }
-            if http.statusCode == 503,
-               let data,
-               String(data: data, encoding: .utf8) == "Not Initialized" {
-                completion(.failure(SendError.notInitialized))
-                return
-            }
             guard (200..<300).contains(http.statusCode) else {
                 completion(.failure(SendError.badResponse(http.statusCode)))
                 return

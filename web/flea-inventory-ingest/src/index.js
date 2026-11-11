@@ -175,23 +175,18 @@ export class InventoryStore {
       return new Response("Bad Request", { status: 400 });
     }
 
-    const previous = await this.loadStoredOrder(prepared.now);
-    // 順序が無い = 移行未完了。既存の公開在庫より古いスナップショットを
-    // 受け入れてしまうため、自動では処理せず、運用者の初期化を待つ。
-    if (previous === null) {
-      return new Response("Not Initialized", {
-        status: 503,
-        headers: { "Retry-After": "60" },
-      });
+    const previous = await this.loadOrderOrRetry(prepared.now);
+    if (previous === undefined) {
+      return new Response("Storage Unavailable", { status: 503 });
     }
-    if (isStoredNewer(previous, prepared.incoming)) {
+    if (previous !== null && isStoredNewer(previous, prepared.incoming)) {
       return new Response("Stale", { status: 409 });
     }
 
     return this.commit(previous, prepared.incoming, prepared.storedBody);
   }
 
-  // 移行時に、運用者が確認した最新スナップショットで順序を初期化する。
+  // 復旧用。運用者が確認したスナップショットで順序を初期化する。
   // 既に順序がある場合は、それより古いスナップショットを受け付けない。
   async initialize(body) {
     const prepared = this.parseSnapshot(body);
@@ -199,12 +194,25 @@ export class InventoryStore {
       return new Response("Bad Request", { status: 400 });
     }
 
-    const previous = await this.loadStoredOrder(prepared.now);
+    const previous = await this.loadOrderOrRetry(prepared.now);
+    if (previous === undefined) {
+      return new Response("Storage Unavailable", { status: 503 });
+    }
     if (previous !== null && isStoredNewer(previous, prepared.incoming)) {
       return new Response("Stale", { status: 409 });
     }
 
     return this.commit(previous, prepared.incoming, prepared.storedBody);
+  }
+
+  // 順序を読めなかった場合は undefined。KV が一時的に読めないだけで、
+  // 再送すれば成功しうるため、古いスナップショットを基準なしで受け入れない。
+  async loadOrderOrRetry(now) {
+    try {
+      return await this.loadStoredOrder(now);
+    } catch {
+      return undefined;
+    }
   }
 
   // 先に順序を確定してから KV を書く。KV が失敗したら順序を元に戻す。
@@ -244,10 +252,9 @@ export class InventoryStore {
     }
   }
 
-  // 保存済みの順序を返す。無ければ DO の旧キーから引き継ぐ。
-  // 引き継げる基準が無い場合は null を返し、呼び出し側は /init を待つ。
-  // KV は表示用の写しであり、反映が遅れるため順序の基準には使わない。
-  // 古い KV 値を基準にすると、その値と実際の保存値の間のスナップショットを
+  // 保存済みの順序を返す。無ければ DO の旧キー、それも無ければ KV の最後の
+  // 公開値から一度だけ初期化する。KV は反映が遅れるため毎回の比較には使わない。
+  // 古い KV 値を毎回基準にすると、その値と実際の保存値の間のスナップショットを
   // 受け入れてしまい、新しい公開在庫を上書きするおそれがある。
   async loadStoredOrder(now) {
     const stored = await this.state.storage.get(ORDER_KEY);
@@ -270,9 +277,33 @@ export class InventoryStore {
       }
     }
 
-    // 強い基準が無い場合は自動では受け付けない。移行時に古いスナップショットを
-    // 受け入れて公開在庫を巻き戻さないよう、運用者が /init で初期化する。
-    return null;
+    return this.bootstrapOrder(now);
+  }
+
+  // 順序が無い DO の一度だけの初期化。
+  // 旧版は順序を KV に保存していたため、切り替え前の最後の公開値をここで読む。
+  // 毎回の比較に KV を使うと反映遅延で誤判定するが、初期値として一度だけ
+  // 読むのは、切り替え前より古いスナップショットを受け付けないため。
+  // 以降の比較と保存は DO の保存値だけで行う。
+  async bootstrapOrder(now) {
+    const stored = await this.env.INVENTORY_KV.get(KEY);
+    // 初回導入。まだ公開されたものが無いので、最初のスナップショットを起点にする。
+    if (stored === null || stored === undefined) return null;
+
+    let at;
+    try {
+      at = Date.parse(JSON.parse(stored).created_at);
+    } catch {
+      // 壊れた保存データは基準にしない。次の正常な送信で置き換える。
+      return null;
+    }
+    // 未来の値は基準にしない（旧版は丸めていなかった）。時計を直した端末の
+    // 送信が拒否され続けないよう、基準なしとして次の送信を受け付ける。
+    if (!Number.isFinite(at) || at > now + MAX_FUTURE_SKEW_MS) return null;
+
+    const order = { at, revision: -1 };
+    await this.state.storage.put(ORDER_KEY, order);
+    return order;
   }
 
   toOrder(value, now) {
