@@ -70,6 +70,20 @@ export default {
       return new Response("Bad Request", { status: 400 });
     }
 
+         // 保存済みより古いスナップショットでは上書きしない。
+     const stored = await env.INVENTORY_KV.get(KEY);
+     if (stored !== null) {
+       let storedAt = NaN;
+       try {
+         storedAt = Date.parse(JSON.parse(stored).created_at);
+       } catch {
+         // 壊れた保存データは比較せず上書きする。
+       }
+       if (!Number.isNaN(storedAt) && storedAt > Date.parse(parsed.created_at)) {
+         return new Response("Stale", { status: 200 });
+       }
+     }
+
     await env.INVENTORY_KV.put(KEY, body);
     return new Response("OK", { status: 200 });
   },

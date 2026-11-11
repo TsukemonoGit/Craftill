@@ -192,6 +192,8 @@ final class AppViewModel: ObservableObject {
     /// 変更をまとめて自動送信するまでの待ち時間（最後の変更から）。
     private static let autoSendDelay: TimeInterval = 10
     private var autoSendTask: DispatchWorkItem?
+    /// 送信中か。並行送信を防ぎ、古いスナップショットが後から届くのを避ける。
+    private var isSending = false
     /// 未送信の変更があるか。通信回復時・起動時に送る。UserDefaults に保存する。
      private var pendingAutoSend = SyncSettings.pendingAutoSend {
          didSet { SyncSettings.pendingAutoSend = pendingAutoSend }
@@ -1898,6 +1900,15 @@ final class AppViewModel: ObservableObject {
     /// 失敗しても会計・在庫には影響させない（A-14）。
     /// - Parameter automatic: 変更後の自動送信。オフラインなら保留し、通信回復後に送る。
     func sendSnapshot(automatic: Bool = false) {
+        if isSending {
+             if automatic {
+                 // 送信完了後に、新しい変更分を送る。
+                 pendingAutoSend = true
+             } else {
+                 message = "送信中です。完了後にもう一度お試しください"
+             }
+             return
+         }
         let generation = changeGeneration
         let snapshot = makeSnapshot(types: types, inventory: inventory, now: Date())
 
@@ -1922,10 +1933,12 @@ final class AppViewModel: ObservableObject {
         }
 
         if !automatic { message = "送信中…" }
+        isSending = true
         let sender = SnapshotSender(endpoint: url, token: syncToken)
         sender.send(snapshot) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
+                self.isSending = false
                 switch result {
                 case .success:
                     // 送信中に新しい変更が入っていた場合は、保留を残す。
@@ -1936,6 +1949,8 @@ final class AppViewModel: ObservableObject {
                     self.message = automatic
                         ? "公開サイトへ自動送信しました（商品 \(snapshot.products.count)件）"
                         : "公開サイトへ送信しました（商品 \(snapshot.products.count)件）"
+                    // 送信中に入った変更を送る。
+                    if self.pendingAutoSend { self.requestAutoSend() }
                 case .failure(let error):
                     if automatic { self.pendingAutoSend = true }
                     self.recordSyncResult(snapshot: snapshot, error: error.localizedDescription)
