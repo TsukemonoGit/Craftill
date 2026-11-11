@@ -10,6 +10,7 @@ enum SyncSettings {
     private static let endpointKey = "craftill.syncEndpoint"
     private static let autoSendKey = "craftill.syncAutoSend"
     private static let pendingAutoSendKey = "craftill.syncPendingAutoSend"
+    private static let staleRejectedKey = "craftill.syncStaleRejected"
 
     static var endpoint: String {
         get { UserDefaults.standard.string(forKey: endpointKey) ?? "" }
@@ -28,6 +29,11 @@ enum SyncSettings {
      static var pendingAutoSend: Bool {
          get { UserDefaults.standard.bool(forKey: pendingAutoSendKey) }
          set { UserDefaults.standard.set(newValue, forKey: pendingAutoSendKey) }
+     }
+     /// 時計のずれ等で、サイト側に拒否された変更があるか。手動送信が成功するまで保持する。
+     static var staleRejected: Bool {
+         get { UserDefaults.standard.bool(forKey: staleRejectedKey) }
+         set { UserDefaults.standard.set(newValue, forKey: staleRejectedKey) }
      }
 
     static var token: String {

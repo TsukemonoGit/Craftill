@@ -200,6 +200,11 @@ final class AppViewModel: ObservableObject {
      }
      /// 変更のたびに増える。送信完了時に、送信中に新しい変更が入っていないか判定する。
      private var changeGeneration = 0
+    /// サイト側に拒否された未反映の変更があるか。画面から参照して表示できる。
+     @Published private(set) var staleRejected = SyncSettings.staleRejected {
+         didSet { SyncSettings.staleRejected = staleRejected }
+     }
+
 
     init() {
         pin = PinStore.load()
@@ -1941,6 +1946,7 @@ final class AppViewModel: ObservableObject {
                 self.isSending = false
                 switch result {
                 case .success:
+                    self.staleRejected = false
                     // 送信中に新しい変更が入っていた場合は、保留を残す。
                     if self.changeGeneration == generation {
                         self.pendingAutoSend = false
@@ -1958,11 +1964,19 @@ final class AppViewModel: ObservableObject {
                          // 同じ内容を再送しても同じ結果になるため、保留を下ろす。
                          // 送信中に新しい変更が入っていた場合は残す。
                          if self.changeGeneration == generation { self.pendingAutoSend = false }
+                         // 手動送信で再送できるよう、未反映として記録する。
+                         self.staleRejected = true
                      } else if automatic {
                          self.pendingAutoSend = true
                      }
                     self.recordSyncResult(snapshot: snapshot, error: error.localizedDescription)
-                    self.message = "送信に失敗しました: \(error.localizedDescription)"
+                    self.message = isStale
+                         ? "送信に失敗しました: \(error.localizedDescription)\n端末の時計を確認し、直したあとに手動で送信してください"
+                         : "送信に失敗しました: \(error.localizedDescription)"
+                     // 送信中に入った変更の予約が isSending で捨てられていた場合に備え、再予約する。
+                     if self.pendingAutoSend && self.changeGeneration != generation {
+                         self.requestAutoSend()
+                     }
                 }
             }
         }
