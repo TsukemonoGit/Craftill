@@ -76,14 +76,16 @@ const sleep = (ms) => {
   });
 };
 
-// KV バインディングのエラーが一時的か。429 と 5xx だけ再試行する。
+// KV バインディングのエラーが一時的か。429・5xx と接続断だけ再試行する。
+// Cloudflare は "Network connection lost" などを一時的な接続障害として扱い、
+// バインディング呼び出しの再試行を案内している。
 const isRetryableKvError = (error) => {
   const status = error && (error.status || error.statusCode);
   if (typeof status === "number") return status === 429 || status >= 500;
   const message = String((error && error.message) || error || "");
   return (
     /\b(429|5\d\d)\b/.test(message) ||
-    /rate limit|too many requests|timeout|timed out|unavailable|internal error/i.test(
+    /rate limit|too many requests|timeout|timed out|unavailable|internal error|network connection lost|connection (?:reset|lost|refused|closed)|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(
       message
     )
   );
@@ -197,20 +199,10 @@ export class InventoryStore {
     }
   }
 
-  async kvGetWithRetry() {
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await this.env.INVENTORY_KV.get(KEY);
-      } catch (error) {
-        if (attempt >= KV_RETRY_DELAYS_MS.length || !isRetryableKvError(error)) {
-          throw error;
-        }
-        await sleep(KV_RETRY_DELAYS_MS[attempt]);
-      }
-    }
-  }
-
-  // 保存済みの順序を返す。無ければ DO の旧キー → KV の順に引き継ぐ。
+  // 保存済みの順序を返す。無ければ DO の旧キーから引き継ぐ。
+  // KV は表示用の写しであり、反映が遅れるため順序の基準には使わない。
+  // 古い KV 値を基準にすると、その値と実際の保存値の間のスナップショットを
+  // 受け入れてしまい、新しい公開在庫を上書きするおそれがある。
   async loadStoredOrder(now) {
     const stored = await this.state.storage.get(ORDER_KEY);
     const order = this.toOrder(stored, now);
@@ -220,28 +212,20 @@ export class InventoryStore {
       await this.state.storage.delete(ORDER_KEY);
     }
 
-    // 旧版の DO 保存値（created_at の文字列）。revision が無いので -1 とする。
+    // 旧版の DO 保存値（created_at の文字列）。DO の storage は強整合なので、
+    // これを移行の基準にする。revision が無いので -1 とする。
     const legacy = await this.state.storage.get(LEGACY_CREATED_AT_KEY);
     if (typeof legacy === "string") {
       const ms = Date.parse(legacy);
       if (!Number.isNaN(ms) && ms <= now + MAX_FUTURE_SKEW_MS) {
-        return { at: ms, revision: -1 };
+        const migrated = { at: ms, revision: -1 };
+        await this.state.storage.put(ORDER_KEY, migrated);
+        return migrated;
       }
     }
 
-    // 初回デプロイ時は、それまでの KV の保存内容を引き継ぐ。
-    // 未来の値が既に入っている場合は、復旧できるように引き継がない。
-    const kv = await this.kvGetWithRetry();
-    if (kv === null) return null;
-    try {
-      const snapshot = JSON.parse(kv);
-      if (!isDateString(snapshot.created_at)) return null;
-      const ms = Date.parse(snapshot.created_at);
-      if (Number.isNaN(ms) || ms > now + MAX_FUTURE_SKEW_MS) return null;
-      return { at: ms, revision: isRevision(snapshot.revision) ? snapshot.revision : -1 };
-    } catch {
-      return null;
-    }
+    // 強い基準が無い場合は、最初に届いたスナップショットを新しい順序の起点にする。
+    return null;
   }
 
   toOrder(value, now) {

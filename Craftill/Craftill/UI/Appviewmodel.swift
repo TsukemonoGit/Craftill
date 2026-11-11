@@ -1987,9 +1987,8 @@ final class AppViewModel: ObservableObject {
              }
              return
          }
-        // これから送るので、予約済みの再送は取り消す（失敗時に改めて予約する）。
-        cancelAutoRetry()
         // マスタを読めていない状態で送ると、空のスナップショットで公開在庫を消す。
+        // 予約済みの再送は、実際に送る直前まで取り消さない（早期リターンで失わないように）。
         guard isMasterLoaded else {
             if automatic {
                 pendingAutoSend = true
@@ -2023,6 +2022,8 @@ final class AppViewModel: ObservableObject {
         }
 
         if !automatic { message = "送信中…" }
+        // 実際に送る直前に、予約済みの再送を取り消す（失敗時に改めて予約する）。
+        cancelAutoRetry()
         isSending = true
         let sender = SnapshotSender(endpoint: url, token: syncToken)
         sender.send(snapshot) { [weak self] result in
@@ -2053,10 +2054,13 @@ final class AppViewModel: ObservableObject {
                          // 手動送信で再送できるよう、未反映として記録する。
                          self.staleRejected = true
                          self.cancelAutoRetry(reset: true)
-                     } else if automatic {
-                         self.pendingAutoSend = true
-                         // サーバー障害・429・通信断などは、少し待って自動で再送する。
-                         if Self.isRetryableSyncError(error) {
+                     } else {
+                         if automatic { self.pendingAutoSend = true }
+                         // 自動送信が有効で未反映の変更が残っているなら、手動送信が
+                         // 一時的なエラーで失敗した場合も自動で再送する。
+                         if self.autoSendEnabled,
+                            self.pendingAutoSend,
+                            Self.isRetryableSyncError(error) {
                              self.scheduleAutoRetry()
                          } else {
                              self.cancelAutoRetry(reset: true)
