@@ -1,6 +1,6 @@
 const KEY = "inventory:v1";
 // 新しい保存順序のキー。旧版は created_at を文字列で保存していたため、
-// 初回はそちらから引き継ぐ。
+// 初回はそちらから引き継ぐ。引き継げない場合は /init で明示的に初期化する。
 const ORDER_KEY = "snapshot_order";
 const LEGACY_CREATED_AT_KEY = "created_at";
 
@@ -94,7 +94,10 @@ const isRetryableKvError = (error) => {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname !== "/ingest" || request.method !== "POST") {
+    const isIngest = url.pathname === "/ingest" && request.method === "POST";
+    // 移行時だけ使う順序の初期化。通常の送信とは別に、運用者が明示的に呼ぶ。
+    const isInit = url.pathname === "/init" && request.method === "POST";
+    if (!isIngest && !isInit) {
       return new Response("Not Found", { status: 404 });
     }
 
@@ -125,8 +128,11 @@ export class InventoryStore {
   }
 
   async fetch(request) {
+    const path = new URL(request.url).pathname;
     const body = await request.text();
-    const result = this.tail.then(() => this.ingest(body));
+    const run =
+      path === "/init" ? () => this.initialize(body) : () => this.ingest(body);
+    const result = this.tail.then(run);
     this.tail = result.then(
       () => undefined,
       () => undefined
@@ -134,17 +140,16 @@ export class InventoryStore {
     return result;
   }
 
-  async ingest(body) {
+  // 受信した JSON を検証し、未来すぎる created_at を丸めた保存用の値を返す。
+  // 不正なら null。
+  parseSnapshot(body) {
     let parsed;
     try {
       parsed = JSON.parse(body);
     } catch {
-      return new Response("Bad Request", { status: 400 });
+      return null;
     }
-
-    if (!isValidSnapshot(parsed)) {
-      return new Response("Bad Request", { status: 400 });
-    }
+    if (!isValidSnapshot(parsed)) return null;
 
     const now = Date.now();
     const receivedAt = Date.parse(parsed.created_at);
@@ -157,15 +162,55 @@ export class InventoryStore {
       storedAt = now;
     }
 
-    const incoming = { at: storedAt, revision: revisionOf(parsed) };
-    const previous = await this.loadStoredOrder(now);
-    if (previous !== null && isStoredNewer(previous, incoming)) {
+    return {
+      now,
+      storedBody,
+      incoming: { at: storedAt, revision: revisionOf(parsed) },
+    };
+  }
+
+  async ingest(body) {
+    const prepared = this.parseSnapshot(body);
+    if (prepared === null) {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    const previous = await this.loadStoredOrder(prepared.now);
+    // 順序が無い = 移行未完了。既存の公開在庫より古いスナップショットを
+    // 受け入れてしまうため、自動では処理せず、運用者の初期化を待つ。
+    if (previous === null) {
+      return new Response("Not Initialized", {
+        status: 503,
+        headers: { "Retry-After": "60" },
+      });
+    }
+    if (isStoredNewer(previous, prepared.incoming)) {
       return new Response("Stale", { status: 409 });
     }
 
-    // 先に順序を確定してから KV を書く。KV が失敗したら順序を元に戻す。
-    // 戻さないと、KV に入っていない順序が保存済みとして残り、再送が
-    // 409 になったり、古い内容が採用されたりする。
+    return this.commit(previous, prepared.incoming, prepared.storedBody);
+  }
+
+  // 移行時に、運用者が確認した最新スナップショットで順序を初期化する。
+  // 既に順序がある場合は、それより古いスナップショットを受け付けない。
+  async initialize(body) {
+    const prepared = this.parseSnapshot(body);
+    if (prepared === null) {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    const previous = await this.loadStoredOrder(prepared.now);
+    if (previous !== null && isStoredNewer(previous, prepared.incoming)) {
+      return new Response("Stale", { status: 409 });
+    }
+
+    return this.commit(previous, prepared.incoming, prepared.storedBody);
+  }
+
+  // 先に順序を確定してから KV を書く。KV が失敗したら順序を元に戻す。
+  // 戻さないと、KV に入っていない順序が保存済みとして残り、再送が
+  // 409 になったり、古い内容が採用されたりする。
+  async commit(previous, incoming, storedBody) {
     await this.state.storage.put(ORDER_KEY, incoming);
     try {
       await this.putKvWithRetry(storedBody);
@@ -200,6 +245,7 @@ export class InventoryStore {
   }
 
   // 保存済みの順序を返す。無ければ DO の旧キーから引き継ぐ。
+  // 引き継げる基準が無い場合は null を返し、呼び出し側は /init を待つ。
   // KV は表示用の写しであり、反映が遅れるため順序の基準には使わない。
   // 古い KV 値を基準にすると、その値と実際の保存値の間のスナップショットを
   // 受け入れてしまい、新しい公開在庫を上書きするおそれがある。
@@ -224,7 +270,8 @@ export class InventoryStore {
       }
     }
 
-    // 強い基準が無い場合は、最初に届いたスナップショットを新しい順序の起点にする。
+    // 強い基準が無い場合は自動では受け付けない。移行時に古いスナップショットを
+    // 受け入れて公開在庫を巻き戻さないよう、運用者が /init で初期化する。
     return null;
   }
 
