@@ -120,7 +120,7 @@ struct Product: Codable, Equatable, Identifiable {
 
     /// 公開サイトへ送る `has_image` の判定。保存先フォルダに実ファイルがあるときだけ true。
     /// 旧版が同梱した画像は含めない（Web 用に static/images へコピーできる実ファイルが対象）。
-     var hasRuntimeImage: Bool {
+    var hasRuntimeImage: Bool {
         ProductImageStore.hasRuntimeImage(fileName: bundledImageName)
     }
 }

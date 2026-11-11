@@ -1543,9 +1543,10 @@ final class AppViewModel: ObservableObject {
         return text
     }
 
-    /// 画像ファイルが同梱されていない登録商品（A-1）。
-    /// `image_ref` の有無ではなく、バンドル内に実ファイルがあるかで判定する。
-    var productsWithoutImage: [Product] { inventory.filter { !$0.hasDisplayImage } }
+    /// 保存先フォルダに画像ファイルがない登録商品（A-1）。
+     /// Web 用に `<商品ID>.jpg` をコピーできるかを見るため、表示用フォールバック
+     /// （旧版の端末内コピー・同梱画像）は含めず、保存先フォルダの実ファイルで判定する。
+     var productsWithoutImage: [Product] { inventory.filter { !$0.hasRuntimeImage } }
 
     // MARK: CSV取り込み（A-1 / P4）
 
