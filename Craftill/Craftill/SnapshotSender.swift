@@ -9,6 +9,7 @@ import Security
 enum SyncSettings {
     private static let endpointKey = "craftill.syncEndpoint"
     private static let autoSendKey = "craftill.syncAutoSend"
+    private static let pendingAutoSendKey = "craftill.syncPendingAutoSend"
 
     static var endpoint: String {
         get { UserDefaults.standard.string(forKey: endpointKey) ?? "" }
@@ -22,6 +23,12 @@ enum SyncSettings {
         }
         set { UserDefaults.standard.set(newValue, forKey: autoSendKey) }
     }
+
+     /// 未送信の変更があるか。アプリ終了後も保持し、次回起動時に送る。
+     static var pendingAutoSend: Bool {
+         get { UserDefaults.standard.bool(forKey: pendingAutoSendKey) }
+         set { UserDefaults.standard.set(newValue, forKey: pendingAutoSendKey) }
+     }
 
     static var token: String {
         get { SyncTokenStore.load() ?? "" }

@@ -192,8 +192,12 @@ final class AppViewModel: ObservableObject {
     /// 変更をまとめて自動送信するまでの待ち時間（最後の変更から）。
     private static let autoSendDelay: TimeInterval = 10
     private var autoSendTask: DispatchWorkItem?
-    /// オフラインなどで送れなかった変更があるか。通信回復時に送る。
-    private var pendingAutoSend = false
+    /// 未送信の変更があるか。通信回復時・起動時に送る。UserDefaults に保存する。
+     private var pendingAutoSend = SyncSettings.pendingAutoSend {
+         didSet { SyncSettings.pendingAutoSend = pendingAutoSend }
+     }
+     /// 変更のたびに増える。送信完了時に、送信中に新しい変更が入っていないか判定する。
+     private var changeGeneration = 0
 
     init() {
         pin = PinStore.load()
@@ -219,6 +223,9 @@ final class AppViewModel: ObservableObject {
             }
         }
         pathMonitor.start(queue: pathQueue)
+
+        // 前回終了時に未送信だった変更があれば送る。
+         if pendingAutoSend { requestAutoSend() }
 
         // 会計状態は更新のたびに保存する（A-3）。willChange の直後に読む。
         objectWillChange
@@ -1860,7 +1867,6 @@ final class AppViewModel: ObservableObject {
         if enabled {
             if pendingAutoSend { requestAutoSend() }
         } else {
-            if autoSendTask != nil { pendingAutoSend = true }
             cancelScheduledAutoSend()
         }
     }
@@ -1868,6 +1874,8 @@ final class AppViewModel: ObservableObject {
     /// データ変更後に呼ぶ。最後の変更から少し待ち、まとめて1回だけ送る。
     /// 送信先が未設定のときは何もしない（操作を妨げない）。
     func requestAutoSend() {
+        changeGeneration += 1
+        pendingAutoSend = true
         guard autoSendEnabled else { return }
         let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !endpoint.isEmpty else { return }
@@ -1890,6 +1898,7 @@ final class AppViewModel: ObservableObject {
     /// 失敗しても会計・在庫には影響させない（A-14）。
     /// - Parameter automatic: 変更後の自動送信。オフラインなら保留し、通信回復後に送る。
     func sendSnapshot(automatic: Bool = false) {
+        let generation = changeGeneration
         let snapshot = makeSnapshot(types: types, inventory: inventory, now: Date())
 
         let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1919,7 +1928,10 @@ final class AppViewModel: ObservableObject {
                 guard let self else { return }
                 switch result {
                 case .success:
-                    self.pendingAutoSend = false
+                    // 送信中に新しい変更が入っていた場合は、保留を残す。
+                    if self.changeGeneration == generation {
+                        self.pendingAutoSend = false
+                    }
                     self.recordSyncResult(snapshot: snapshot, error: nil)
                     self.message = automatic
                         ? "公開サイトへ自動送信しました（商品 \(snapshot.products.count)件）"
