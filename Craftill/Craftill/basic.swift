@@ -1329,7 +1329,7 @@ func setRefunded(saleId: String, value: Bool = true,
 
 // @section: snapshot
 /// 送信スナップショットを作る。**`image_ref` は含めない**。
-/// `has_image` は保存先フォルダまたは同梱画像の実在から導出（A-14）。
+/// `has_image` は保存先フォルダの実ファイルの実在から導出（A-14。旧版の同梱画像も互換で見る）。
 /// グループは送信しない（A-14）。
 func makeSnapshot(types: [ProductType], inventory: [Product], now: Date) -> Snapshot {
     let publicProducts = inventory.filter { $0.isPublic }

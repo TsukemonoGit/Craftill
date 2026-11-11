@@ -45,7 +45,7 @@ struct ProductPhotoSection: View {
         return storedPreview
     }
 
-    /// アプリから削除できる写真か（同梱画像は読み取り専用）。
+    /// アプリから削除できる写真か（旧版の同梱画像は読み取り専用）。
     private var isRuntimeImage: Bool {
         if pendingData != nil { return true }
         if removeImage { return false }
@@ -104,9 +104,9 @@ struct ProductPhotoSection: View {
                             }
                     }
                     if previewImage != nil && !isRuntimeImage {
-                        FieldHelp("この写真はアプリに同梱されています。差し替えるには originals/ の原本を変更して画像ビルドしてください。")
+                        FieldHelp("この写真は旧版でアプリに同梱されたものです。「写真を追加」で登録し直すと、保存先フォルダの画像に差し替わります。")
                     }
-                    FieldHelp("登録した写真は切り取り範囲を確認して保存します。保存先は「画像の保存先」で選んだフォルダで、保存後はレジの商品タイルに表示されます。公開サイト用の画像ビルドもそのフォルダを使います。")
+                    FieldHelp("登録した写真は切り取り範囲を確認して保存します。保存先は「画像の保存先」で選んだフォルダで、保存後はレジの商品タイルに表示されます。")
                 }
             }
         }

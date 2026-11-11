@@ -161,6 +161,8 @@ final class AppViewModel: ObservableObject {
     @Published var lastSyncAt: Date? = nil
     @Published var syncEndpoint = SyncSettings.endpoint
     @Published var syncToken = SyncSettings.token
+    /// 変更後の自動送信（全体設定）。会計ごとのチェックボックスは持たない。
+    @Published var autoSendEnabled = SyncSettings.autoSend
     /// QRラベル画面で、直前に登録した商品だけを表示するためのID。
     /// 商品登録直後の「QRを印刷」導線で使う。他の画面へ移ると解除する。
     @Published var qrFocusProductId: String? = nil
@@ -187,6 +189,11 @@ final class AppViewModel: ObservableObject {
     private var pendingSatsMove: Move?
     private let pathMonitor = NWPathMonitor()
     private let pathQueue = DispatchQueue(label: "dev.craftill.network-monitor")
+    /// 変更をまとめて自動送信するまでの待ち時間（最後の変更から）。
+    private static let autoSendDelay: TimeInterval = 10
+    private var autoSendTask: DispatchWorkItem?
+    /// オフラインなどで送れなかった変更があるか。通信回復時に送る。
+    private var pendingAutoSend = false
 
     init() {
         pin = PinStore.load()
@@ -201,7 +208,15 @@ final class AppViewModel: ObservableObject {
         // A-10: OS の接続状態を購読する。手動トグルは廃止。
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let online = path.status == .satisfied
-            DispatchQueue.main.async { self?.isOnline = online }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let wasOnline = self.isOnline
+                self.isOnline = online
+                // オフライン中に保留した変更は、通信が戻ったらまとめて送る。
+                if online && !wasOnline && self.pendingAutoSend {
+                    self.requestAutoSend()
+                }
+            }
         }
         pathMonitor.start(queue: pathQueue)
 
@@ -853,6 +868,7 @@ final class AppViewModel: ObservableObject {
         #else
         message = "全データを初期化しました"
         #endif
+        requestAutoSend()
     }
 
     /// 会計（販売・明細・販売に伴う在庫変動）を削除する。
@@ -903,6 +919,7 @@ final class AppViewModel: ObservableObject {
         ids = Self.makeSequencer(sales: sales, movements: movements,
                                  syncLog: syncLog, cart: [])
         message = parts.joined(separator: "\n")
+        requestAutoSend()
     }
 
     /// 在庫だけを初期登録時の数量へ戻す。販売履歴は残す。
@@ -919,6 +936,7 @@ final class AppViewModel: ObservableObject {
         } else {
             message = "在庫 \(result.changed)件を初期データへ戻しました"
         }
+        requestAutoSend()
     }
 
     /// 商品ごとの初期在庫（`reason = initial` の合計）へ現在庫を戻す。
@@ -1050,6 +1068,7 @@ final class AppViewModel: ObservableObject {
             message = "在庫のある商品がないため、テスト会計を追加できませんでした"
         } else {
             message = "テスト会計を \(added)件追加しました（売上・在庫に反映済み）"
+            requestAutoSend()
         }
     }
 
@@ -1104,6 +1123,7 @@ final class AppViewModel: ObservableObject {
                             totalSats: sale.totalSats, cashPart: sale.totalJpy,
                             received: sale.receivedJpy, change: sale.changeJpy)
             clearActiveSale()
+            requestAutoSend()
         }
     }
 
@@ -1185,6 +1205,7 @@ final class AppViewModel: ObservableObject {
             sales = allSales
             ids = seq
             message = memo.isEmpty ? "販売取消: \(id)" : "販売取消: \(id)\n" + memo.joined(separator: "\n")
+            requestAutoSend()
         }
     }
 
@@ -1236,6 +1257,7 @@ final class AppViewModel: ObservableObject {
             inventory = inv
             movements = mov
             ids = seq
+            requestAutoSend()
             return nil
         }
     }
@@ -1318,6 +1340,7 @@ final class AppViewModel: ObservableObject {
                 return "種類を保存できませんでした: \(error.localizedDescription)"
             }
             types = updated
+            requestAutoSend()
             return nil
         }
     }
@@ -1372,6 +1395,7 @@ final class AppViewModel: ObservableObject {
             return "種類を保存できませんでした: \(error.localizedDescription)"
         }
         types[i] = updated
+        requestAutoSend()
         return nil
     }
 
@@ -1416,6 +1440,7 @@ final class AppViewModel: ObservableObject {
             types = allTypes
             movements = mov
             ids = seq
+            requestAutoSend()
             return nil
         }
     }
@@ -1445,6 +1470,7 @@ final class AppViewModel: ObservableObject {
                 return "商品を保存できませんでした: \(error.localizedDescription)"
             }
             inventory = updated
+            requestAutoSend()
             return nil
         }
     }
@@ -1482,7 +1508,12 @@ final class AppViewModel: ObservableObject {
         }
 
         inventory = updated
-        message = "sats価格を \(changed.count)件更新しました（\(satsBulkSummary(changed))）。公開サイトへ反映するには送信してください。"
+        if autoSendEnabled {
+            message = "sats価格を \(changed.count)件更新しました（\(satsBulkSummary(changed))）。公開サイトへ自動送信します。"
+        } else {
+            message = "sats価格を \(changed.count)件更新しました（\(satsBulkSummary(changed))）。公開サイトへ反映するには送信してください。"
+        }
+        requestAutoSend()
         return nil
     }
 
@@ -1500,7 +1531,7 @@ final class AppViewModel: ObservableObject {
 
     /// 画像ファイルが同梱されていない登録商品（A-1）。
     /// `image_ref` の有無ではなく、バンドル内に実ファイルがあるかで判定する。
-    var productsWithoutImage: [Product] { inventory.filter { !$0.hasBundledImage } }
+    var productsWithoutImage: [Product] { inventory.filter { !$0.hasDisplayImage } }
 
     // MARK: CSV取り込み（A-1 / P4）
 
@@ -1569,6 +1600,7 @@ final class AppViewModel: ObservableObject {
             parts.append("在庫上書き \(plan.stockDiffs.count)件")
         }
         message = parts.joined(separator: " / ")
+        requestAutoSend()
         return []
     }
 
@@ -1805,6 +1837,7 @@ final class AppViewModel: ObservableObject {
         SyncSettings.endpoint = endpoint
         syncEndpoint = endpoint
         message = "送信先を保存しました"
+        if autoSendEnabled { requestAutoSend() }
         return true
     }
 
@@ -1820,35 +1853,79 @@ final class AppViewModel: ObservableObject {
         return deleted
     }
 
+    /// 自動送信のON/OFFを保存する。ONに戻したとき、保留中の変更があれば送る。
+    func setAutoSendEnabled(_ enabled: Bool) {
+        autoSendEnabled = enabled
+        SyncSettings.autoSend = enabled
+        if enabled {
+            if pendingAutoSend { requestAutoSend() }
+        } else {
+            if autoSendTask != nil { pendingAutoSend = true }
+            cancelScheduledAutoSend()
+        }
+    }
+
+    /// データ変更後に呼ぶ。最後の変更から少し待ち、まとめて1回だけ送る。
+    /// 送信先が未設定のときは何もしない（操作を妨げない）。
+    func requestAutoSend() {
+        guard autoSendEnabled else { return }
+        let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !endpoint.isEmpty else { return }
+        cancelScheduledAutoSend()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.autoSendTask = nil
+            self.sendSnapshot(automatic: true)
+        }
+        autoSendTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.autoSendDelay, execute: task)
+    }
+
+    private func cancelScheduledAutoSend() {
+        autoSendTask?.cancel()
+        autoSendTask = nil
+    }
+
     /// 実際にスナップショットを送信する。成功ログは HTTP 2xx のときだけ残す。
     /// 失敗しても会計・在庫には影響させない（A-14）。
-    func sendSnapshot() {
+    /// - Parameter automatic: 変更後の自動送信。オフラインなら保留し、通信回復後に送る。
+    func sendSnapshot(automatic: Bool = false) {
         let snapshot = makeSnapshot(types: types, inventory: inventory, now: Date())
 
         let endpoint = syncEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !endpoint.isEmpty else {
-            recordSyncResult(snapshot: snapshot, error: "送信先が未設定です（送信先URLを保存してください）")
+            if automatic { pendingAutoSend = true }
+            else { recordSyncResult(snapshot: snapshot, error: "送信先が未設定です（送信先URLを保存してください）") }
             return
         }
         guard let url = URL(string: endpoint), url.scheme != nil else {
-            recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です")
+            if automatic { pendingAutoSend = true }
+            else { recordSyncResult(snapshot: snapshot, error: "送信先URLが不正です") }
             return
         }
         guard isOnline else {
-            recordSyncResult(snapshot: snapshot, error: "通信エラー（オフライン）")
+            if automatic {
+                pendingAutoSend = true
+            } else {
+                recordSyncResult(snapshot: snapshot, error: "通信エラー（オフライン）")
+            }
             return
         }
 
-        message = "送信中…"
+        if !automatic { message = "送信中…" }
         let sender = SnapshotSender(endpoint: url, token: syncToken)
         sender.send(snapshot) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success:
+                    self.pendingAutoSend = false
                     self.recordSyncResult(snapshot: snapshot, error: nil)
-                    self.message = "公開サイトへ送信しました（商品 \(snapshot.products.count)件）"
+                    self.message = automatic
+                        ? "公開サイトへ自動送信しました（商品 \(snapshot.products.count)件）"
+                        : "公開サイトへ送信しました（商品 \(snapshot.products.count)件）"
                 case .failure(let error):
+                    if automatic { self.pendingAutoSend = true }
                     self.recordSyncResult(snapshot: snapshot, error: error.localizedDescription)
                     self.message = "送信に失敗しました: \(error.localizedDescription)"
                 }

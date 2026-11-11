@@ -59,7 +59,7 @@ struct Product: Codable, Equatable, Identifiable {
     var attr1: String? = nil
     var attr2: String? = nil
     var attr3: String? = nil
-    var imageRef: String? = nil      // 同梱画像への参照。**B へは送らない**（A-14）
+    var imageRef: String? = nil      // 保存先フォルダの画像ファイル名。**B へは送らない**（A-14）
     var isPublic: Bool = false       // 公開状態（CSV では 1/0）
     var updatedAt: Date? = nil
 
@@ -102,29 +102,23 @@ struct Product: Codable, Equatable, Identifiable {
         return parts.joined(separator: " ")
     }
 
-    /// 同梱画像のファイル名。`image_ref` が無い商品は、商品IDから導出する（A-17）。
-    /// 画像ビルドスクリプトは `originals/` の原本を「商品ID.jpg」で出力するため、
+    /// 画像のファイル名。`image_ref` が無い商品は、商品IDから導出する（A-17）。
+    /// 保存先フォルダには `<商品ID>.jpg` で保存するため、
     /// 商品追加・CSV取り込みで `image_ref` が空でも画像を表示できる。
     var bundledImageName: String {
         if let imageRef, !imageRef.isEmpty { return imageRef }
         return "\(id).jpg"
     }
 
-    /// ビルド時に同梱した画像が実在するか（A-1、A-17）。
-    /// 実行時に登録した写真は含めない（公開サイト用の画像はビルド時に作るため）。
-    var hasBundledImage: Bool {
-        bundledOnlyImageURL(named: bundledImageName) != nil
-    }
-
     /// レジ画面に表示できる画像があるか。
-    /// 実行時に登録した写真（端末内）か、ビルド時に同梱した画像のどちらか。
+    /// 保存先フォルダの `<商品ID>.jpg` を探す（旧版が同梱した画像もフォールバックで探す）。
     var hasDisplayImage: Bool {
         bundledImageURL(named: bundledImageName) != nil
     }
 }
 
-/// 表示用の画像 URL。実行時に登録した写真を優先し、
-/// 無ければ Xcode に同梱した画像を探す（A-17）。
+/// 表示用の画像 URL。保存先フォルダの写真を優先し、
+/// 無ければ旧版が Xcode に同梱した画像を探す。
 func bundledImageURL(named name: String) -> URL? {
     guard !name.isEmpty else { return nil }
     if let runtime = ProductImageStore.displayURL(fileName: name) {
@@ -133,7 +127,7 @@ func bundledImageURL(named name: String) -> URL? {
     return bundledOnlyImageURL(named: name)
 }
 
-/// ビルド時に同梱した画像だけを探す。
+/// 旧版が Xcode に同梱した画像だけを探す（互換用。新規の画像は保存先フォルダに置く）。
 /// Xcode がリソースを直下に置く場合と、`Images/` サブディレクトリを保つ場合の両方に対応する。
 func bundledOnlyImageURL(named name: String) -> URL? {
     guard !name.isEmpty else { return nil }
@@ -297,7 +291,7 @@ struct SnapshotProduct: Codable, Equatable {
     let priceSats: Int?        // 空の場合あり
     let attrs: [String?]       // 項目の並びは attrLabels に合わせる
     let stock: Int?            // 在庫管理なし型は nil
-    let hasImage: Bool         // 保持項目ではない。`bundledImageName` の実在（保存先フォルダ・同梱画像）から導出する（A-14）
+    let hasImage: Bool         // 保持項目ではない。保存先フォルダの実ファイル（旧版は同梱画像）から導出する（A-14）
 }
 
 struct Snapshot: Codable, Equatable {

@@ -8,10 +8,19 @@ import Security
 
 enum SyncSettings {
     private static let endpointKey = "craftill.syncEndpoint"
+    private static let autoSendKey = "craftill.syncAutoSend"
 
     static var endpoint: String {
         get { UserDefaults.standard.string(forKey: endpointKey) ?? "" }
         set { UserDefaults.standard.set(newValue, forKey: endpointKey) }
+    }
+
+    /// 会計・在庫・商品などの変更後に、自動でスナップショットを送るか（全体設定）。
+    static var autoSend: Bool {
+        get {
+            UserDefaults.standard.object(forKey: autoSendKey) as? Bool ?? true
+        }
+        set { UserDefaults.standard.set(newValue, forKey: autoSendKey) }
     }
 
     static var token: String {
