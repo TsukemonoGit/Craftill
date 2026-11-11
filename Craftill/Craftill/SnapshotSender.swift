@@ -86,11 +86,14 @@ struct SnapshotSender {
     enum SendError: LocalizedError {
         case badResponse(Int)
         case emptyResponse
+        case stale
 
         var errorDescription: String? {
             switch self {
             case .badResponse(let code): return "HTTP \(code)"
             case .emptyResponse: return "応答が空です"
+            case .stale: return "サイト側により新しいデータがあります（端末の時計のずれの可能性）"
+
             }
         }
     }
@@ -123,6 +126,10 @@ struct SnapshotSender {
                 completion(.failure(SendError.emptyResponse))
                 return
             }
+            if http.statusCode == 409 {
+                 completion(.failure(SendError.stale))
+                 return
+             }
             guard (200..<300).contains(http.statusCode) else {
                 completion(.failure(SendError.badResponse(http.statusCode)))
                 return

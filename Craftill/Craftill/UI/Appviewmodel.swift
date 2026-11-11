@@ -1952,7 +1952,15 @@ final class AppViewModel: ObservableObject {
                     // 送信中に入った変更を送る。
                     if self.pendingAutoSend { self.requestAutoSend() }
                 case .failure(let error):
-                    if automatic { self.pendingAutoSend = true }
+                    var isStale = false
+                     if case SnapshotSender.SendError.stale = error { isStale = true }
+                     if isStale {
+                         // 同じ内容を再送しても同じ結果になるため、保留を下ろす。
+                         // 送信中に新しい変更が入っていた場合は残す。
+                         if self.changeGeneration == generation { self.pendingAutoSend = false }
+                     } else if automatic {
+                         self.pendingAutoSend = true
+                     }
                     self.recordSyncResult(snapshot: snapshot, error: error.localizedDescription)
                     self.message = "送信に失敗しました: \(error.localizedDescription)"
                 }

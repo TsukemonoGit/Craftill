@@ -80,7 +80,8 @@ export default {
          // 壊れた保存データは比較せず上書きする。
        }
        if (!Number.isNaN(storedAt) && storedAt > Date.parse(parsed.created_at)) {
-         return new Response("Stale", { status: 200 });
+         return new Response("Stale", { status: 409 });
+
        }
      }
 
