@@ -272,7 +272,7 @@ python3 scripts/build_images.py \
 - `web/flea-inventory-view/static/images/manifest.csv` — 商品IDごとの画像有無と原本ハッシュ
 - `Craftill/Craftill/ImageBuildInfo.swift` と `web/flea-inventory-view/static/images/version.txt` — アプリと Web の画像版を照合するための識別子
 
-`--strict` を付けると、原本の欠落・余剰・読み込めない画像などがある場合に終了コード 1 を返します。原本はコミットしません（`originals/` は `.gitignore` 対象）。原本は別の場所へバックアップしてください。
+`--strict` を付けると、原本の欠落・余剰・読み込めない画像、変換や配置の失敗などがある場合に終了コード 1 を返します。原本はコミットしません（`originals/` は `.gitignore` 対象）。原本は別の場所へバックアップしてください。
 
 ---
 

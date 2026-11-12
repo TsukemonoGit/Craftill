@@ -315,12 +315,15 @@ def main() -> int:
                             os.replace(register_tmp, args.app_out / register_name)
                             os.replace(web_tmp, args.web_out / web_name)
                         except OSError as e:
+                            issues.append(Issue("write_failed", f"画像を配置できません: {pid}: {e}"))
                             eprint(f"エラー: 画像を配置できません: {pid}: {e}")
                         else:
                             has_image = "1"
                             source_hash = sha256(source)
                             source_hashes.append(f"{pid}:{source_hash}")
                             converted += 1
+                    else:
+                        issues.append(Issue("convert_failed", f"画像を変換できません: {source.name}"))
                 finally:
                     for tmp in (register_tmp, web_tmp):
                         try:
