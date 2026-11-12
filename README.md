@@ -143,7 +143,7 @@ npx wrangler deploy
 
 ```sh
 cd ../flea-inventory-view
-npm install
+npm ci
 npm run build
 npx wrangler deploy
 ```
@@ -262,8 +262,8 @@ python3 scripts/build_images.py \
 
 `--web-out` を省略すると `web/public/images` に出力されます。このリポジトリの Web アプリは `web/flea-inventory-view/static/images` を配信するため、上のように指定してください。
 
-> **注意：出力先の既存 JPEG は削除されます。**
-> `build_images.py` は実行のたびに出力先（`Craftill/Craftill/Images/` と Web の出力先）の `*.jpg` を走査し、その回に生成できなかったファイルを削除します。手動でコピーした画像、商品マスタから消えた商品の画像、原本が欠落・読み込み失敗した商品の画像も削除対象です。`--strict` のエラー判定はこの削除の後に行われるため、警告が出ても削除はすでに実行されています。実行前に両方の出力先をバックアップしてください。
+> **出力先の既存画像について**
+> `build_images.py` は、前回の `manifest.csv` に「生成済み」として記録されている画像だけを後始末の対象にします。商品マスタから消えた商品の画像は自動で削除しますが、手動で置いた画像や、商品マスタに残っている商品の画像は削除しません。ただし、初回実行時など `manifest.csv` が無い場合は過去の生成物を特定できないため、古い画像が残ることがあります。その場合は出力先を確認して手動で削除してください。
 
 主な出力：
 
@@ -282,6 +282,7 @@ python3 scripts/build_images.py \
 - 現金会計は通信なしで動きます。
 - 端末が壊れるとデータも失われるため、営業後はこまめにエクスポートしてください。
 - エクスポートには販売履歴・販売明細・在庫変動・送信ログも含まれますが、アプリで再取り込みできるのは商品マスタ（グループ・種類・商品）だけです。販売履歴と在庫変動は CSV から復元できません。
+- 完全なバックアップには、アプリを終了したうえで `~/Library/Application Support/Craftill/craftill.sqlite` をコピーしてください。CSV だけでは販売履歴・在庫変動までは戻せません。
 - PIN と送信トークンは Keychain に保存します。Worker の `WRITE_SECRET` は漏えい時に再発行してください。
 
 ---
