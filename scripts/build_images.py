@@ -303,12 +303,30 @@ def main() -> int:
                     issues.append(Issue("large", f"ファイルサイズが20MBを超えています: {source.name}"))
                 register_name = f"{pid}.jpg"
                 web_name = f"{pid}.jpg"
-                if (make_jpeg(source, args.app_out / register_name, args.register_max)
-                        and make_jpeg(source, args.web_out / web_name, args.web_max)):
-                    has_image = "1"
-                    source_hash = sha256(source)
-                    source_hashes.append(f"{pid}:{source_hash}")
-                    converted += 1
+                register_tmp = args.app_out / f".{pid}.tmp.jpg"
+                web_tmp = args.web_out / f".{pid}.tmp.jpg"
+                try:
+                    if (make_jpeg(source, register_tmp, args.register_max)
+                            and make_jpeg(source, web_tmp, args.web_max)):
+                        # 両方の変換に成功してから置き換える。片方だけ失敗した
+                        # ときに、既存のレジ用・Web 用画像の片側だけが新しく
+                        # なるのを避ける。
+                        try:
+                            os.replace(register_tmp, args.app_out / register_name)
+                            os.replace(web_tmp, args.web_out / web_name)
+                        except OSError as e:
+                            eprint(f"エラー: 画像を配置できません: {pid}: {e}")
+                        else:
+                            has_image = "1"
+                            source_hash = sha256(source)
+                            source_hashes.append(f"{pid}:{source_hash}")
+                            converted += 1
+                finally:
+                    for tmp in (register_tmp, web_tmp):
+                        try:
+                            tmp.unlink()
+                        except FileNotFoundError:
+                            pass
 
         register_file = f"{pid}.jpg" if has_image == "1" else ""
         web_file = f"{pid}.jpg" if has_image == "1" else ""
@@ -357,7 +375,7 @@ def main() -> int:
     print(f"  Web用:  {args.web_out}")
     print(f"  対応一覧: {manifest}")
     if retained:
-        print(f"  原本を読み込めないため、前回の画像を保持: {retained}件")
+        print(f"  今回は再生成できず、前回の画像を保持: {retained}件")
     if stale_removed:
         print(f"  商品マスタから消えた商品の画像を {stale_removed} 件削除しました")
 
