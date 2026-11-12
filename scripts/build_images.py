@@ -174,14 +174,21 @@ def write_info_swift(path: Path, version: str, generated_at: str, image_count: i
     )
 
 
-def read_previous_generated(manifest_path: Path) -> Dict[str, Tuple[str, str]]:
+@dataclass
+class GeneratedImage:
+    register_file: str = ""
+    web_file: str = ""
+    source_sha256: str = ""
+
+
+def read_previous_generated(manifest_path: Path) -> Dict[str, GeneratedImage]:
     """前回の manifest.csv から、生成済みのファイル名を商品IDごとに読む。
 
     manifest が無い・壊れている場合は空を返し、削除は行わない。
     """
     if not manifest_path.exists():
         return {}
-    previous: Dict[str, Tuple[str, str]] = {}
+    previous: Dict[str, GeneratedImage] = {}
     try:
         with manifest_path.open("r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
@@ -189,18 +196,25 @@ def read_previous_generated(manifest_path: Path) -> Dict[str, Tuple[str, str]]:
                 pid = (row.get("product_id") or "").strip()
                 if not pid or (row.get("has_image") or "").strip() != "1":
                     continue
-                previous[pid] = (
-                    (row.get("register_file") or "").strip(),
-                    (row.get("web_file") or "").strip(),
+                previous[pid] = GeneratedImage(
+                    register_file=(row.get("register_file") or "").strip(),
+                    web_file=(row.get("web_file") or "").strip(),
+                    source_sha256=(row.get("source_sha256") or "").strip(),
                 )
-    except (OSError, csv.Error) as e:
+    except (OSError, csv.Error, UnicodeError) as e:
         eprint(f"警告: 前回の manifest を読めません: {manifest_path}: {e}")
         return {}
     return previous
 
 
+def is_managed_file(directory: Path, name: str) -> bool:
+    """manifest に記録された名前が、出力先直下の実在ファイルを指すか。"""
+    # manifest が壊れていてもディレクトリ外へは触らない。
+    return bool(name) and Path(name).name == name and (directory / name).is_file()
+
+
 def remove_outputs_for_removed_products(
-    previous: Dict[str, Tuple[str, str]],
+    previous: Dict[str, GeneratedImage],
     keep_ids: set,
     app_out: Path,
     web_out: Path,
@@ -211,18 +225,13 @@ def remove_outputs_for_removed_products(
     手動で置いた画像や、商品マスタに残っている商品の画像には触れない。
     """
     removed = 0
-    for pid, names in sorted(previous.items()):
+    for pid, generated in sorted(previous.items()):
         if pid in keep_ids:
             continue
-        for directory, name in zip((app_out, web_out), names):
-            if not name:
-                continue
-            # manifest が壊れていてもディレクトリ外へは触らない。
-            if Path(name).name != name:
+        for directory, name in ((app_out, generated.register_file), (web_out, generated.web_file)):
+            if not is_managed_file(directory, name):
                 continue
             path = directory / name
-            if not path.is_file():
-                continue
             try:
                 path.unlink()
                 removed += 1
@@ -276,6 +285,7 @@ def main() -> int:
     rows: List[Dict[str, str]] = []
     source_hashes: List[str] = []
     converted = 0
+    retained = 0
 
     for pid in product_ids:
         source = originals.get(pid)
@@ -299,10 +309,29 @@ def main() -> int:
                     source_hash = sha256(source)
                     source_hashes.append(f"{pid}:{source_hash}")
                     converted += 1
+
+        register_file = f"{pid}.jpg" if has_image == "1" else ""
+        web_file = f"{pid}.jpg" if has_image == "1" else ""
+        if has_image == "0":
+            # 今回は生成できなくても、前回の生成物が残っていれば管理情報を
+            # 引き継ぐ。商品マスタから後で消えたときに削除できるようにするため。
+            previous = previous_generated.get(pid)
+            if previous is not None:
+                if is_managed_file(args.app_out, previous.register_file):
+                    register_file = previous.register_file
+                if is_managed_file(args.web_out, previous.web_file):
+                    web_file = previous.web_file
+                if register_file or web_file:
+                    has_image = "1"
+                    source_hash = previous.source_sha256
+                    if source_hash:
+                        source_hashes.append(f"{pid}:{source_hash}")
+                    retained += 1
+
         rows.append({
             "product_id": pid,
-            "register_file": f"{pid}.jpg" if has_image == "1" else "",
-            "web_file": f"{pid}.jpg" if has_image == "1" else "",
+            "register_file": register_file,
+            "web_file": web_file,
             "has_image": has_image,
             "source_sha256": source_hash,
         })
@@ -321,12 +350,14 @@ def main() -> int:
         version = "no-images"
     generated_at = __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds")
     (args.web_out / "version.txt").write_text(version + "\n", encoding="utf-8")
-    write_info_swift(args.info_swift, version, generated_at, converted)
+    write_info_swift(args.info_swift, version, generated_at, converted + retained)
 
     print(f"商品 {len(product_ids)}件 / 画像 {converted}件 / 版 {version}")
     print(f"  レジ用: {args.app_out}")
     print(f"  Web用:  {args.web_out}")
     print(f"  対応一覧: {manifest}")
+    if retained:
+        print(f"  原本を読み込めないため、前回の画像を保持: {retained}件")
     if stale_removed:
         print(f"  商品マスタから消えた商品の画像を {stale_removed} 件削除しました")
 
