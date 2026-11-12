@@ -375,7 +375,7 @@
 						ライトニング決済
 					</span>
 					<span class="text-[9px] leading-relaxed font-bold text-ink/50 sm:ml-auto">
-						sats価格は当日のビットコインレートで決まります。
+						sats価格は開催日近くに、その時点のレートで確定します。
 					</span>
 				</div>
 			</section>
@@ -708,7 +708,7 @@
 						お支払いは <span class="text-lemon">現金</span> と
 						<span class="text-lemon">ライトニング決済</span> に対応。
 					</p>
-					<p>sats価格は当日のビットコインレートで決まります。</p>
+					<p>sats価格は開催日近くに、その時点のレートで確定します。</p>
 					<p>画像がない商品は、商品名と属性を表示しています。</p>
 				</div>
 			</div>
