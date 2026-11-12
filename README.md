@@ -139,8 +139,11 @@ npx wrangler deploy
 
 #### 2. 在庫表示 Web
 
+受信 Worker のディレクトリにいる場合は、同階層の表示 Web へ移動します。
+
 ```sh
-cd web/flea-inventory-view
+cd ../flea-inventory-view
+npm install
 npm run build
 npx wrangler deploy
 ```
@@ -228,6 +231,15 @@ npx wrangler deploy
 
 1. 保存先フォルダの画像を `web/flea-inventory-view/static/images/` にコピーする
 2. サイトは `/images/<商品ID>.jpg` を参照する
+3. 画像を追加・差し替えたら、ビルドと再デプロイを行う
+
+```sh
+cd web/flea-inventory-view
+npm run build
+npx wrangler deploy
+```
+
+デプロイ済みのサイトは、ローカルのファイルを置き換えただけでは更新されません。Worker はビルド済みの `.svelte-kit/cloudflare` を配信するため、画像の追加・差し替え後は必ず再ビルドと再デプロイを実行してください。
 
 画像が無い商品は、商品名と属性の文字表示にフォールバックします。
 
@@ -250,6 +262,9 @@ python3 scripts/build_images.py \
 
 `--web-out` を省略すると `web/public/images` に出力されます。このリポジトリの Web アプリは `web/flea-inventory-view/static/images` を配信するため、上のように指定してください。
 
+> **注意：出力先の既存 JPEG は削除されます。**
+> `build_images.py` は実行のたびに出力先（`Craftill/Craftill/Images/` と Web の出力先）の `*.jpg` を走査し、その回に生成できなかったファイルを削除します。手動でコピーした画像、商品マスタから消えた商品の画像、原本が欠落・読み込み失敗した商品の画像も削除対象です。`--strict` のエラー判定はこの削除の後に行われるため、警告が出ても削除はすでに実行されています。実行前に両方の出力先をバックアップしてください。
+
 主な出力：
 
 - `Craftill/Craftill/Images/<商品ID>.jpg` — レジ同梱用サムネイル（JPEG・長辺600px）
@@ -265,7 +280,8 @@ python3 scripts/build_images.py \
 
 - 販売・在庫・商品マスタの正は、端末内の SQLite です。Web 側は表示用のコピーです。
 - 現金会計は通信なしで動きます。
-- 端末が壊れるとデータも失われるため、営業後はこまめに CSV エクスポートしてください。
+- 端末が壊れるとデータも失われるため、営業後はこまめにエクスポートしてください。
+- エクスポートには販売履歴・販売明細・在庫変動・送信ログも含まれますが、アプリで再取り込みできるのは商品マスタ（グループ・種類・商品）だけです。販売履歴と在庫変動は CSV から復元できません。
 - PIN と送信トークンは Keychain に保存します。Worker の `WRITE_SECRET` は漏えい時に再発行してください。
 
 ---
