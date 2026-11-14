@@ -19,6 +19,16 @@ struct RegisterView: View {
     @State private var showScanner = false
     /// タブを押したときだけ商品リストをスクロールする。スクロール中の検知とは分ける。
     @State private var scrollRequest: String? = nil
+    /// 商品リストとカートの表示比率（0.5 = 50:50）。横並び時は幅、縦積み時は高さ。
+    /// 仕切りをドラッグした結果を保存する。
+    @AppStorage("registerSplitRatio") private var registerSplitRatio: Double = 0.5
+
+    private var splitRatio: Binding<CGFloat> {
+        Binding(
+            get: { CGFloat(registerSplitRatio) },
+            set: { registerSplitRatio = Double($0) }
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +41,7 @@ struct RegisterView: View {
                     .frame(maxWidth: compact ? 110 : 160)
                     .disabled(vm.saleState != .idle)
             }
-            AdaptiveHStack(breakpoint: 900, spacing: 10) {
+            AdaptiveHStack(breakpoint: 900, spacing: 10, ratio: splitRatio) {
                 productPanel
             } second: {
                 cartPanel
@@ -237,7 +247,8 @@ struct RegisterView: View {
                 Text("カートは空です\nQRを読み取る／商品をタップ／IDを手入力\nのいずれかで追加してください")
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, minHeight: 160)
+                    .frame(maxWidth: .infinity, minHeight: 72,
+                           idealHeight: 160, maxHeight: 160)
                     .overlay(RoundedRectangle(cornerRadius: 8)
                         .stroke(style: StrokeStyle(lineWidth: 1, dash: [4]))
                         .foregroundColor(.gray))

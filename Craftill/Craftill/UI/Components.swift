@@ -561,16 +561,32 @@ struct PinEntryView: View {
 }
 
 /// 横幅が足りない機種（小さいMac・ウィンドウ縮小）では縦に積む。
+/// `ratio` を渡すと、中央の仕切りをドラッグして横並び時は左右の幅、縦積み時は上下の高さを変えられる。
 struct AdaptiveHStack<First: View, Second: View>: View {
     var breakpoint: CGFloat = 900
     var spacing: CGFloat = 12
+    /// 商品パネルの入力行が崩れない最小幅。
+    var minFirstWidth: CGFloat = 440
+    var minSecondWidth: CGFloat = 380
+    /// 縦積み時に商品リストが潰れない最小高さ。
+    var minFirstHeight: CGFloat = 300
+    var minSecondHeight: CGFloat = 280
+    private let ratio: Binding<CGFloat>?
     private let first: First
     private let second: Second
 
     init(breakpoint: CGFloat = 900, spacing: CGFloat = 12,
+         ratio: Binding<CGFloat>? = nil,
+         minFirstWidth: CGFloat = 440, minSecondWidth: CGFloat = 380,
+         minFirstHeight: CGFloat = 300, minSecondHeight: CGFloat = 280,
          @ViewBuilder first: () -> First, @ViewBuilder second: () -> Second) {
         self.breakpoint = breakpoint
         self.spacing = spacing
+        self.ratio = ratio
+        self.minFirstWidth = minFirstWidth
+        self.minSecondWidth = minSecondWidth
+        self.minFirstHeight = minFirstHeight
+        self.minSecondHeight = minSecondHeight
         self.first = first()
         self.second = second()
     }
@@ -578,18 +594,190 @@ struct AdaptiveHStack<First: View, Second: View>: View {
     var body: some View {
         GeometryReader { geo in
             if geo.size.width >= breakpoint {
-                HStack(alignment: .top, spacing: spacing) {
-                    first.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    second.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let ratio {
+                    splitLayout(width: geo.size.width, ratio: ratio)
+                } else {
+                    HStack(alignment: .top, spacing: spacing) {
+                        first.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        second.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             } else {
-                VStack(alignment: .leading, spacing: spacing) {
-                    first.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    second.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if let ratio {
+                    stackedLayout(height: geo.size.height, ratio: ratio)
+                } else {
+                    VStack(alignment: .leading, spacing: spacing) {
+                        first.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        second.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+    }
+
+    private func splitLayout(width: CGFloat, ratio: Binding<CGFloat>) -> some View {
+        let thickness: CGFloat = 16
+        let usable = max(width - thickness, 1)
+        let firstWidth = splitLength(ratio: ratio.wrappedValue, usable: usable,
+                                     minFirst: minFirstWidth, minSecond: minSecondWidth)
+
+        return HStack(alignment: .top, spacing: 0) {
+            first
+                .frame(width: firstWidth)
+                .frame(maxHeight: .infinity)
+            SplitHandle(ratio: ratio, usable: usable,
+                        minFirst: minFirstWidth, minSecond: minSecondWidth,
+                        thickness: thickness, axis: .sideBySide)
+            second
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .coordinateSpace(name: SplitHandle.coordinateSpaceName)
+    }
+
+    private func stackedLayout(height: CGFloat, ratio: Binding<CGFloat>) -> some View {
+        let thickness: CGFloat = 16
+        let usable = max(height - thickness, 1)
+        let firstHeight = splitLength(ratio: ratio.wrappedValue, usable: usable,
+                                      minFirst: minFirstHeight, minSecond: minSecondHeight)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            first
+                .frame(maxWidth: .infinity)
+                .frame(height: firstHeight)
+            SplitHandle(ratio: ratio, usable: usable,
+                        minFirst: minFirstHeight, minSecond: minSecondHeight,
+                        thickness: thickness, axis: .stacked)
+            second
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .coordinateSpace(name: SplitHandle.coordinateSpaceName)
+    }
+
+    private func splitLength(ratio: CGFloat, usable: CGFloat,
+                             minFirst: CGFloat, minSecond: CGFloat) -> CGFloat {
+        let lower = min(minFirst / usable, 0.5)
+        let upper = max(1 - minSecond / usable, 0.5)
+        return usable * min(max(ratio, lower), upper)
+    }
+}
+
+/// `AdaptiveHStack` の中央にある、ドラッグで幅・高さを変える仕切り。
+private struct SplitHandle: View {
+    static let coordinateSpaceName = "adaptiveHStack.split"
+
+    enum Axis {
+        /// 左右分割。仕切りは縦線。
+        case sideBySide
+        /// 上下分割。仕切りは横線。
+        case stacked
+    }
+
+    @Binding var ratio: CGFloat
+    let usable: CGFloat
+    let minFirst: CGFloat
+    let minSecond: CGFloat
+    let thickness: CGFloat
+    let axis: Axis
+
+    @State private var dragStart: CGFloat?
+    @State private var hovering = false
+
+    private var bounds: ClosedRange<CGFloat> {
+        let lower = min(minFirst / usable, 0.5)
+        let upper = max(1 - minSecond / usable, 0.5)
+        return lower...upper
+    }
+
+    private var resetRatio: CGFloat {
+        min(max(0.5, bounds.lowerBound), bounds.upperBound)
+    }
+
+    var body: some View {
+        ZStack {
+            // つまめる範囲を薄い帯で示す。
+            Rectangle()
+                .fill(hovering ? Color.accentColor.opacity(0.20) : Color.gray.opacity(0.14))
+                .frame(width: axis == .sideBySide ? thickness - 4 : nil,
+                       height: axis == .stacked ? thickness - 4 : nil)
+            // 中央のつまみ。ホバーで色が変わる。
+            ZStack {
+                Capsule()
+                    .fill(hovering ? Color.accentColor : Color.gray.opacity(0.55))
+                if axis == .sideBySide {
+                    VStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            Circle()
+                                .fill(Color.white.opacity(0.95))
+                                .frame(width: 2.5, height: 2.5)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 4) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            Circle()
+                                .fill(Color.white.opacity(0.95))
+                                .frame(width: 2.5, height: 2.5)
+                        }
+                    }
+                }
+            }
+            .frame(width: axis == .sideBySide ? 8 : 44,
+                   height: axis == .stacked ? 8 : 44)
+            .shadow(color: .black.opacity(0.15), radius: 1, y: 1)
+            .scaleEffect(hovering ? 1.08 : 1)
+            .animation(.easeOut(duration: 0.12), value: hovering)
+        }
+        .frame(width: axis == .sideBySide ? thickness : nil,
+               height: axis == .stacked ? thickness : nil)
+        .frame(maxWidth: axis == .stacked ? .infinity : nil,
+               maxHeight: axis == .sideBySide ? .infinity : nil)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            hovering = inside
+            #if canImport(AppKit)
+            if inside {
+                if axis == .sideBySide {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.resizeUpDown.push()
+                }
+            } else {
+                NSCursor.pop()
+            }
+            #endif
+        }
+        .onDisappear {
+            #if canImport(AppKit)
+            if hovering { NSCursor.pop() }
+            #endif
+            hovering = false
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1,
+                        coordinateSpace: .named(Self.coordinateSpaceName))
+                .onChanged { value in
+                    let stored = dragStart ?? ratio
+                    let start = min(max(stored, bounds.lowerBound), bounds.upperBound)
+                    if dragStart == nil { dragStart = start }
+                    let delta = axis == .sideBySide ? value.translation.width
+                                                    : value.translation.height
+                    let next = start + delta / usable
+                    ratio = min(max(next, bounds.lowerBound), bounds.upperBound)
+                }
+                .onEnded { _ in dragStart = nil }
+        )
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded { ratio = resetRatio }
+        )
+        .contextMenu {
+            Button("50:50に戻す") { ratio = resetRatio }
+            Button("商品リストを広げる") { ratio = bounds.upperBound }
+            Button("カートを広げる") { ratio = bounds.lowerBound }
+        }
+        .help(axis == .sideBySide
+              ? "ドラッグで幅を変更（ダブルクリックで50:50）"
+              : "ドラッグで高さを変更（ダブルクリックで50:50）")
     }
 }
 
