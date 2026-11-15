@@ -113,6 +113,13 @@ func move(_ e: SaleEvent, in ctx: SaleContext) -> Move {
                 return .rejected("受取額が請求額（\(due)円）未満です")
             }
             return .allowed(.done)
+        case .changeMethod:
+            // 現金入力をやめて支払方法選択へ戻る。カートはそのまま残すので、
+            // 支払方法選択から「戻る」でスキャン中へ進めば商品も変更できる。
+            guard ctx.satsConfirmedAt == nil else {
+                return .rejected("satsの入金確認済みのため、支払方法は変更できません")
+            }
+            return .allowed(.choosingPayment)
         case .suspend: return .needsConfirm(suspendReason(in: ctx), .suspended)
         default:       return .rejected("この状態ではできません")
         }

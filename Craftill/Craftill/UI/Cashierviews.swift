@@ -619,8 +619,19 @@ struct CashEntryView: View {
                 .buttonStyle(.appPrimary)
                 .frame(maxWidth: .infinity, minHeight: 64)
                 .disabled(!vm.canConfirmCash)
-            Button(mixed ? "会計中断（PIN必須・記録を残す）" : "会計中断") { vm.requestSuspend() }
+            HStack(spacing: 10) {
+                // sats確認後（併用）は支払方法を戻せない。現金のみのときだけ戻れる。
+                if !mixed {
+                    Button("戻る（支払方法）") { vm.reselectMethod() }
+                        .buttonStyle(.app)
+                        .frame(maxWidth: .infinity)
+                }
+                Button(mixed ? "会計中断（PIN必須・記録を残す）" : "会計中断") {
+                    vm.requestSuspend()
+                }
                 .buttonStyle(.app)
+                .frame(maxWidth: .infinity)
+            }
         }
     }
 
@@ -709,17 +720,17 @@ struct SatsWaitingView: View {
                         .frame(maxWidth: 520, minHeight: 72)
                     if compact {
                         VStack(spacing: 10) {
-                            Button("方法選び直し") { vm.reselectMethod() }.buttonStyle(.app)
+                            Button("戻る（支払方法）") { vm.reselectMethod() }.buttonStyle(.app)
                             Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
                         }
                         .frame(maxWidth: .infinity)
                     } else {
                         HStack(spacing: 14) {
-                            Button("方法選び直し") { vm.reselectMethod() }.buttonStyle(.app)
+                            Button("戻る（支払方法）") { vm.reselectMethod() }.buttonStyle(.app)
                             Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
                         }
                     }
-                    Text("済承認前のみ方法選び直し・キャンセル可。")
+                    Text("済承認前のみ戻る・キャンセル可。戻ってもカートは残ります。")
                         .font(.caption).foregroundColor(.secondary)
                 }
                 .frame(maxWidth: 620)

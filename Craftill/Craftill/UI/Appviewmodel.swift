@@ -790,8 +790,14 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// 支払方法の選択へ戻る。カートはそのまま残す（中断とは違う）。
+    /// 現金入力中の受取額は持ち越さない。
     func reselectMethod() {
-        applyMove(.changeMethod)
+        let m = applyMove(.changeMethod)
+        if m.nextState == .choosingPayment {
+            cashReceived = 0
+            message = "支払方法の選択に戻りました（カートは残っています）"
+        }
     }
 
     func pressKey(_ k: String) {
