@@ -211,6 +211,63 @@ struct AmountBox: View {
     }
 }
 
+// MARK: - 会計の進行表示
+
+/// 会計のどの段階にいるか。レジの各画面の上部に出す。
+enum CheckoutStep: Int, CaseIterable {
+    case method, receive, done
+
+    var title: String {
+        switch self {
+        case .method: return "支払方法"
+        case .receive: return "受け取り"
+        case .done: return "完了"
+        }
+    }
+}
+
+/// 会計の進行を「支払方法 → 受け取り → 完了」で示す。
+/// いま何をする画面なのかが一目で分かるようにするためのもの。
+struct CheckoutSteps: View {
+    let current: CheckoutStep
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(CheckoutStep.allCases.enumerated()), id: \.offset) { index, step in
+                if index > 0 {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                chip(step, index: index)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("会計の進み具合: \(current.title)")
+    }
+
+    private func chip(_ step: CheckoutStep, index: Int) -> some View {
+        let done = step.rawValue < current.rawValue
+        let active = step == current
+        return HStack(spacing: 5) {
+            Text(done ? "✓" : "\(index + 1)")
+                .font(.system(size: 11, weight: .bold))
+                .frame(width: 17, height: 17)
+                .background(Circle().fill(active || done ? Color.black : Color.white))
+                .foregroundColor(active || done ? .white : .secondary)
+                .overlay(Circle().stroke(Color.black.opacity(0.5), lineWidth: 1))
+            Text(step.title)
+                .font(.system(size: 12, weight: active ? .bold : .regular))
+                .foregroundColor(active ? .primary : .secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(active ? Color.gray.opacity(0.15) : Color.clear))
+        .overlay(Capsule().stroke(active ? Color.gray.opacity(0.5) : Color.clear, lineWidth: 1))
+    }
+}
+
 /// 2列の管理画面を、狭いときは縦に積む。ScrollView の中でも高さが破綻しない。
 struct AdaptiveColumns<First: View, Second: View>: View {
     @Environment(\.isCompactWidth) private var compact
