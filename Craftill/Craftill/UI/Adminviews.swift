@@ -351,19 +351,23 @@ struct EditView: View {
     }
 
     @EnvironmentObject var vm: AppViewModel
+    @Environment(\.isCompactWidth) private var compact
     @State private var tab: Tab = .product
 
     var body: some View {
         Group {
             if tab == .product {
-                // 商品一覧と編集フォームを、それぞれ独立してスクロールさせる。
-                AdminShell("商品マスタ編集（待機中）", scrolls: false) {
+                // 広い画面では一覧とフォームをそれぞれ独立スクロールさせる。
+                // コンパクト幅では固定部分が高さを使い切って送信操作に届かなくなるため、
+                // 外側1本のスクロールに切り替える。
+                AdminShell("商品マスタ編集（待機中）", scrolls: !compact) {
                     VStack(alignment: .leading, spacing: 14) {
                         header
                         ProductEditor(onOpenTypes: { tab = .type })
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity,
+                           alignment: .topLeading)
                 }
             } else {
                 AdminShell("商品マスタ編集（待機中）") {
@@ -865,7 +869,7 @@ struct ProductEditor: View {
         } second: {
             formPanel.frame(maxWidth: compact ? .infinity : 560)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity, alignment: .topLeading)
         .onAppear {
             if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" }
         }
@@ -955,36 +959,48 @@ struct ProductEditor: View {
                         typeFilter
                     }
                 }
-                // 一覧だけを独立してスクロールさせる。
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if filteredInventory.isEmpty {
-                            Text(vm.inventory.isEmpty
-                                 ? "商品がまだありません。フォームから登録してください。"
-                                 : "条件に合う商品がありません。検索語や種類を変えてください。")
-                                .font(.callout)
-                                .foregroundColor(.secondary)
-                                .padding(.vertical, 8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開", "写真"],
-                                         widths: [65, 115, 140, 55, 55, 45, 45, 40],
-                                         header: true,
-                                         actionWidth: compact ? 0 : 88)
-                            ForEach(filteredInventory) { p in
-                                productRow(p)
-                            }
-                        }
-                        Text("既存商品の編集可: 名前・円価格・sats価格・属性・公開状態。変更不可: 商品ID・種類。在庫は手動在庫調整。商品の削除なし（非公開・在庫0で代替）。")
-                            .font(.caption).foregroundColor(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                listContent
                 listActionBar
             }
         }
-        .frame(maxHeight: .infinity)
+        .frame(maxHeight: compact ? nil : .infinity)
+    }
+
+    /// 広い画面では一覧だけを独立してスクロールさせる。
+    /// コンパクト幅では外側のスクロールに任せる（内側を持つと高さが潰れる）。
+    @ViewBuilder
+    private var listContent: some View {
+        if compact {
+            listRows
+        } else {
+            ScrollView { listRows }
+        }
+    }
+
+    private var listRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if filteredInventory.isEmpty {
+                Text(vm.inventory.isEmpty
+                     ? "商品がまだありません。フォームから登録してください。"
+                     : "条件に合う商品がありません。検索語や種類を変えてください。")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開", "写真"],
+                             widths: [65, 115, 140, 55, 55, 45, 45, 40],
+                             header: true,
+                             actionWidth: compact ? 0 : 88)
+                ForEach(filteredInventory) { p in
+                    productRow(p)
+                }
+            }
+            Text("既存商品の編集可: 名前・円価格・sats価格・属性・公開状態。変更不可: 商品ID・種類。在庫は手動在庫調整。商品の削除なし（非公開・在庫0で代替）。")
+                .font(.caption).foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// 一覧の下に固定する操作バー。sats一括設定を主操作として目立たせる。
@@ -1062,21 +1078,33 @@ struct ProductEditor: View {
         Panel {
             VStack(alignment: .leading, spacing: 12) {
                 formHeader
-                // フォームだけを独立してスクロールさせる。
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        typeSection
-                        basicSection
-                        photoSection
-                        attributeSection
-                        stockSection
-                        submitSection
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                formContent
             }
         }
-        .frame(maxHeight: .infinity)
+        .frame(maxHeight: compact ? nil : .infinity)
+    }
+
+    /// 広い画面ではフォームだけを独立してスクロールさせる。
+    /// コンパクト幅では外側のスクロールに任せる（内側を持つと送信操作まで届かなくなる）。
+    @ViewBuilder
+    private var formContent: some View {
+        if compact {
+            formFields
+        } else {
+            ScrollView { formFields }
+        }
+    }
+
+    private var formFields: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            typeSection
+            basicSection
+            photoSection
+            attributeSection
+            stockSection
+            submitSection
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var formHeader: some View {
