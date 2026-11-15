@@ -381,6 +381,8 @@ final class AppViewModel: ObservableObject {
     var cashDue: Int { saleState == .mixedCashInput ? totals.cashForSats : totals.cash }
     var canConfirmCash: Bool { cashReceived >= cashDue }
     var change: Int { max(0, cashReceived - cashDue) }
+    /// 請求額に足りない分（画面表示用）。足りているときは 0。
+    var cashShortfall: Int { max(0, cashDue - cashReceived) }
 
     func groupLabel(_ id: String?) -> String {
         guard let id else { return "グループなし" }
@@ -802,6 +804,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func addCash(_ n: Int) { cashReceived += n }
+
+    /// 受取額を請求額ちょうどにする（「ちょうど」ボタン）。
+    func acceptExactCash() { cashReceived = cashDue }
 
     func confirmCash() {
         guard canConfirmCash else { return }

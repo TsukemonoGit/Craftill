@@ -397,7 +397,10 @@ struct PaymentSelectView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TopBar("レジ", state: compact ? nil : vm.saleState.label)
+            TopBar("レジ（支払方法）", state: compact ? nil : vm.saleState.label)
+            CheckoutSteps(current: .method)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             if compact {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 16) {
@@ -432,9 +435,13 @@ struct PaymentSelectView: View {
             Button { vm.chooseSats() } label: {
                 VStack(spacing: 6) {
                     Text("sats払い").font(.system(size: 24, weight: .bold))
-                    Text(vm.satsLine.replacingOccurrences(of: "sats払い　", with: "")).font(.system(size: 18))
-                    if vm.totals.cashForSats > 0 && vm.cart.canPayBySats() {
-                        Text("（\(Fmt.yen(vm.totals.cashForSats))分は現金で受け取り）").font(.caption)
+                    if vm.canPayBySats {
+                        Text(satsPayText).font(.system(size: 18))
+                        if vm.totals.cashForSats > 0 {
+                            Text("（\(Fmt.yen(vm.totals.cashForSats))分は現金で受け取り）").font(.caption)
+                        }
+                    } else {
+                        Text("選択できません").font(.system(size: 18))
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: 130)
@@ -442,7 +449,7 @@ struct PaymentSelectView: View {
             .buttonStyle(.app)
             .disabled(!vm.canPayBySats)
             if let reason = vm.satsDisabledReason {
-                Text("sats払い　選択不可: \(reason)")
+                Text("sats払いを選べません: \(reason)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -463,12 +470,35 @@ struct PaymentSelectView: View {
                 TableRowView(cells: [l.id, l.name, "\(l.qty)", Fmt.yen(l.subtotalJpy)], widths: [100, 200, 60, 110])
             }
             Spacer(minLength: 8)
-            Panel {
-                Text(vm.satsLine).font(.system(size: 16, weight: .bold))
-                Text(vm.cashLine).font(.system(size: 16, weight: .bold))
-            }
+            totalsPanel
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 「現金いくら／satsいくら」を並べて、選ぶ前に金額が分かるようにする。
+    private var totalsPanel: some View {
+        Panel(title: "お支払い合計") {
+            VStack(alignment: .leading, spacing: 8) {
+                totalRow("現金", Fmt.yen(vm.totals.cash))
+                totalRow("sats払い", satsPayText)
+            }
+        }
+    }
+
+    private var satsPayText: String {
+        guard vm.canPayBySats else { return "選択できません" }
+        if vm.totals.cashForSats == 0 { return Fmt.sats(vm.totals.sats) }
+        return "\(Fmt.sats(vm.totals.sats)) ＋ \(Fmt.yen(vm.totals.cashForSats))"
+    }
+
+    private func totalRow(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 12) {
+            Text(label).foregroundColor(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(.body, design: .monospaced))
+                .fontWeight(.semibold)
+        }
     }
 }
 
@@ -481,67 +511,157 @@ struct CashEntryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TopBar("レジ", state: compact ? nil : vm.saleState.label)
+            TopBar(mixed ? "レジ（sats＋現金）" : "レジ（現金）",
+                   state: compact ? nil : vm.saleState.label)
+            CheckoutSteps(current: .receive)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             if compact {
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 16) {
-                        cashPanel
-                        keypadPanel.frame(maxWidth: .infinity, alignment: .center)
+                    VStack(spacing: 14) {
+                        if mixed { satsConfirmedBox }
+                        requestBox
+                        VStack(spacing: 8) {
+                            receivedBox
+                            quickCashButtons
+                        }
+                        keypadPanel
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        changeAndConfirm
                     }
                     .padding(14)
                 }
             } else {
                 AdaptiveHStack(breakpoint: 820, spacing: 28) {
-                    cashPanel
+                    // ウィンドウが低いときも「確定」「会計中断」へ届くように、
+                    // 左列だけを独立してスクロールさせる（キーパッドは固定）。
+                    ScrollView(showsIndicators: false) {
+                        amountColumn
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 } second: {
                     keypadPanel
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
                 .padding(24)
             }
-            Spacer(minLength: 0)
             MessageBar()
         }
     }
 
-    private var cashPanel: some View {
-        VStack(spacing: compact ? 8 : 12) {
-            if mixed {
-                InfoBox(text: "sats確認済み　\(Fmt.sats(vm.totals.sats))　確認 \(Fmt.time(vm.satsConfirmedAt))",
-                        size: 16, tint: .green)
+    /// 金額の確認と確定操作。左列の内容。
+    private var amountColumn: some View {
+        VStack(spacing: 12) {
+            if mixed { satsConfirmedBox }
+            requestBox
+            VStack(spacing: 8) {
+                receivedBox
+                quickCashButtons
             }
-            AmountBox(label: mixed ? "請求額（現金分）" : "請求額",
-                      value: Fmt.yen(vm.cashDue), size: 28, horizontal: compact)
-            AmountBox(label: "受取額",
-                      value: Fmt.yen(vm.cashReceived), size: 22, horizontal: compact)
-            AmountBox(label: "お釣り",
-                      value: vm.canConfirmCash ? Fmt.yen(vm.change) : "―",
-                      size: 22, horizontal: compact)
-            Button("確定") { vm.confirmCash() }
-                .buttonStyle(.appPrimary)
-                .frame(maxWidth: .infinity, minHeight: 60)
-                .disabled(!vm.canConfirmCash)
-            Text("受取額 < 請求額の間、確定ボタン無効").font(.caption).foregroundColor(.secondary)
-            Button(mixed ? "会計中断（PIN必須・記録を残す）" : "会計中断") { vm.requestSuspend() }
-                .buttonStyle(.app)
+            changeAndConfirm
         }
-        .frame(maxWidth: .infinity)
     }
 
-    private var keypadPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            KeypadView(keyboard: true) { vm.pressKey($0) }
+    // MARK: 金額
+
+    private var satsConfirmedBox: some View {
+        VStack(spacing: 2) {
+            Text("sats払いは確認済み")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text("\(Fmt.sats(vm.totals.sats))　\(Fmt.time(vm.satsConfirmedAt)) 確認")
+                .font(.system(size: 17, weight: .semibold))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.green.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.green.opacity(0.45)))
+    }
+
+    private var requestBox: some View {
+        AmountBox(label: mixed ? "請求額（現金分）" : "請求額",
+                  value: Fmt.yen(vm.cashDue),
+                  size: compact ? 24 : 32,
+                  tint: .blue,
+                  horizontal: compact)
+    }
+
+    private var receivedBox: some View {
+        AmountBox(label: "受取額（入力）",
+                  value: Fmt.yen(vm.cashReceived),
+                  size: compact ? 22 : 28,
+                  horizontal: compact)
+    }
+
+    private var quickCashButtons: some View {
+        VStack(spacing: 8) {
             HStack(spacing: 8) {
+                Button("ちょうど") { vm.acceptExactCash() }
+                    .buttonStyle(.app)
+                    .disabled(vm.cashReceived == vm.cashDue)
                 Button("＋1,000円") { vm.addCash(1_000) }.buttonStyle(.app)
                 Button("＋5,000円") { vm.addCash(5_000) }.buttonStyle(.app)
             }
-            .frame(maxWidth: 360)
             HStack(spacing: 8) {
                 Button("＋10,000円") { vm.addCash(10_000) }.buttonStyle(.app)
-                Button("クリア") { vm.pressKey("C") }.buttonStyle(.app)
+                Button("クリア") { vm.pressKey("C") }
+                    .buttonStyle(.app)
+                    .disabled(vm.cashReceived == 0)
             }
-            .frame(maxWidth: 360)
+        }
+    }
+
+    /// この画面でいちばん大事な「お釣り」。足りないときは不足額を出す。
+    private var changeAndConfirm: some View {
+        VStack(spacing: 10) {
+            changeBox
+            Button("確定") { vm.confirmCash() }
+                .buttonStyle(.appPrimary)
+                .frame(maxWidth: .infinity, minHeight: 64)
+                .disabled(!vm.canConfirmCash)
+            Button(mixed ? "会計中断（PIN必須・記録を残す）" : "会計中断") { vm.requestSuspend() }
+                .buttonStyle(.app)
+        }
+    }
+
+    private var changeBox: some View {
+        let enough = vm.canConfirmCash
+        let tint: Color = enough ? .green : .orange
+        return VStack(spacing: 2) {
+            Text(enough ? "お釣り" : "不足")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(tint)
+            Text(Fmt.yen(enough ? vm.change : vm.cashShortfall))
+                .font(.system(size: compact ? 40 : 48, weight: .bold))
+                .foregroundColor(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.45)
+            Text(enough
+                 ? (vm.change == 0 ? "ちょうどの受取額です" : "受取額 − 請求額")
+                 : "受取額が請求額に届いていません")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.6), lineWidth: 2))
+        .accessibilityElement(children: .combine)
+    }
+
+    private var keypadPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("受取額を入力").font(.headline)
+            KeypadView(keyboard: true) { vm.pressKey($0) }
+            #if os(macOS)
+            Text("数字キー・Delete（クリア）でも入力できます")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            #endif
             if mixed {
-                Text("済承認後は方法選び直し・キャンセル不可。").font(.caption).foregroundColor(.secondary)
+                Text("sats確認後は支払方法の選び直し・キャンセルはできません。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -555,7 +675,10 @@ struct SatsWaitingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TopBar("レジ", state: compact ? nil : vm.saleState.label)
+            TopBar("レジ（sats払い）", state: compact ? nil : vm.saleState.label)
+            CheckoutSteps(current: .receive)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             ScrollView(showsIndicators: false) {
                 VStack(spacing: compact ? 10 : 14) {
                     AmountBox(label: "請求sats額",
@@ -626,26 +749,95 @@ struct DoneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TopBar("レジ", state: compact ? nil : vm.saleState.label)
-            VStack(spacing: 14) {
-                InfoBox(text: "完了", size: 32)
-                if let d = vm.done {
-                    TableRowView(cells: ["販売ID", d.saleId], widths: [200, 400])
-                    TableRowView(cells: ["方法", d.method.label], widths: [200, 400])
-                    TableRowView(cells: ["請求sats額", d.totalSats.map { Fmt.sats($0) } ?? "―"], widths: [200, 400])
-                    TableRowView(cells: ["現金（請求）", d.cashPart.map { Fmt.yen($0) } ?? "―"], widths: [200, 400])
-                    TableRowView(cells: ["受取額", d.received.map { Fmt.yen($0) } ?? "―"], widths: [200, 400])
-                    TableRowView(cells: ["お釣り", d.change.map { Fmt.yen($0) } ?? "―"], widths: [200, 400])
+            TopBar("レジ（完了）", state: compact ? nil : vm.saleState.label)
+            CheckoutSteps(current: .done)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 16) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 30))
+                            .foregroundColor(.green)
+                        Text("会計完了")
+                            .font(.system(size: 28, weight: .bold))
+                    }
+                    if let d = vm.done {
+                        if let change = d.change {
+                            changeCard(change)
+                        }
+                        detailPanel(d)
+                    }
+                    Button("次の会計へ") { vm.nextSale() }
+                        .buttonStyle(.appPrimary)
+                        .frame(maxWidth: 600, minHeight: 64)
                 }
-                Button("次の会計へ") { vm.nextSale() }
-                    .buttonStyle(.appPrimary)
-                    .frame(maxWidth: 600, minHeight: 64)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 24)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 24)
-            .frame(maxWidth: 720)
-            Spacer()
             MessageBar()
         }
+    }
+
+    /// 完了後にいちばん確認したい「お釣り」を大きく出す。
+    private func changeCard(_ change: Int) -> some View {
+        VStack(spacing: 4) {
+            Text("お釣り")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(.green)
+            Text(Fmt.yen(change))
+                .font(.system(size: compact ? 44 : 56, weight: .bold))
+                .foregroundColor(.green)
+                .lineLimit(1)
+                .minimumScaleFactor(0.45)
+            Text(change == 0 ? "お釣りはありません" : "お客様にお渡しください")
+                .font(.callout)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color.green.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.green.opacity(0.5), lineWidth: 2))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func detailPanel(_ d: DoneInfo) -> some View {
+        VStack(spacing: 0) {
+            detailRow("販売ID", d.saleId)
+            Divider()
+            detailRow("支払方法", d.method.label)
+            if let totalSats = d.totalSats {
+                Divider()
+                detailRow("請求sats額", Fmt.sats(totalSats))
+            }
+            if let cashPart = d.cashPart {
+                Divider()
+                detailRow("現金（請求）", Fmt.yen(cashPart))
+            }
+            if let received = d.received {
+                Divider()
+                detailRow("受取額", Fmt.yen(received))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.gray.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.gray.opacity(0.4)))
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 12) {
+            Text(label)
+                .foregroundColor(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(.body, design: .monospaced))
+                .fontWeight(.semibold)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(.vertical, 8)
     }
 }
