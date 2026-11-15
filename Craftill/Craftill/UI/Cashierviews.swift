@@ -804,18 +804,18 @@ struct SatsWaitingView: View {
         VStack(spacing: 10) {
             if compact {
                 VStack(spacing: 10) {
-                    Button("支払方法を選び直す") { vm.reselectMethod() }.buttonStyle(.app)
+                    Button("戻る（支払方法）") { vm.reselectMethod() }.buttonStyle(.app)
                     Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
                 }
                 .frame(maxWidth: .infinity)
             } else {
                 HStack(spacing: 14) {
-                    Button("支払方法を選び直す") { vm.reselectMethod() }.buttonStyle(.app)
+                    Button("戻る（支払方法）") { vm.reselectMethod() }.buttonStyle(.app)
                     Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
                 }
                 .frame(maxWidth: 520)
             }
-            Text("入金確認の前だけ、選び直し・キャンセルができます。戻ってもカートは残ります。")
+            Text("入金確認の前だけ、支払方法へ戻る・キャンセルができます。戻ってもカートは残ります。")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
