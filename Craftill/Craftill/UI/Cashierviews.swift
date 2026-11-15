@@ -566,7 +566,7 @@ struct CashEntryView: View {
 
     private var satsConfirmedBox: some View {
         VStack(spacing: 2) {
-            Text("sats払いは確認済み")
+            Text("sats は受け取り済み")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Text("\(Fmt.sats(vm.totals.sats))　\(Fmt.time(vm.satsConfirmedAt)) 確認")
@@ -684,6 +684,8 @@ struct SatsWaitingView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
 
+    private var satsAmount: String { "\(Fmt.num(vm.totals.sats)) sats" }
+
     var body: some View {
         VStack(spacing: 0) {
             TopBar("レジ（sats払い）", state: compact ? nil : vm.saleState.label)
@@ -691,63 +693,141 @@ struct SatsWaitingView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
             ScrollView(showsIndicators: false) {
-                VStack(spacing: compact ? 10 : 14) {
-                    AmountBox(label: "請求sats額",
-                              value: "\(Fmt.num(vm.totals.sats)) sats",
-                              size: 38, horizontal: compact)
-                    if vm.totals.cashForSats > 0 {
-                        InfoBox(text: "sats確認後に現金 \(Fmt.yen(vm.totals.cashForSats))を受け取る", size: 18, tint: .yellow)
-                    }
-                    Text("WoSへ入力する額は請求sats額のみ（現金分は入力しない）")
-                        .font(.caption).foregroundColor(.secondary)
-                    if compact {
-                        VStack(spacing: 10) {
-                            elapsedTime
-                            Button("sats額をコピー") { vm.copySatsAmount() }
-                                .buttonStyle(.app)
-                                .frame(maxWidth: .infinity, minHeight: 52)
-                        }
-                    } else {
-                        HStack(spacing: 14) {
-                            elapsedTime
-                            Button("sats額をコピー") { vm.copySatsAmount() }
-                                .buttonStyle(.app)
-                                .frame(maxWidth: 220, minHeight: 52)
-                        }
-                    }
-                    Button("済（WoSで入金を確認）") { vm.askSatsConfirm() }
-                        .buttonStyle(.appPrimary)
-                        .frame(maxWidth: 520, minHeight: 72)
-                    if compact {
-                        VStack(spacing: 10) {
-                            Button("戻る（支払方法）") { vm.reselectMethod() }.buttonStyle(.app)
-                            Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
-                        }
-                        .frame(maxWidth: .infinity)
-                    } else {
-                        HStack(spacing: 14) {
-                            Button("戻る（支払方法）") { vm.reselectMethod() }.buttonStyle(.app)
-                            Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
-                        }
-                    }
-                    Text("済承認前のみ戻る・キャンセル可。戻ってもカートは残ります。")
-                        .font(.caption).foregroundColor(.secondary)
+                VStack(spacing: compact ? 12 : 14) {
+                    amountCard
+                    if vm.totals.cashForSats > 0 { cashNotice }
+                    stepsPanel
+                    confirmButton
+                    secondaryActions
                 }
                 .frame(maxWidth: 620)
                 .padding(.horizontal, 16)
-                .padding(.top, compact ? 16 : 24)
+                .padding(.top, compact ? 14 : 20)
+                .padding(.bottom, 20)
                 .frame(maxWidth: .infinity)
             }
             MessageBar()
         }
     }
 
-    private var elapsedTime: some View {
+    /// 請求するsats額。コピーしてWoSへ貼り付ける。
+    private var amountCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "bitcoinsign.circle.fill")
+                    .foregroundColor(.orange)
+                Text("WoSで請求する額")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 8)
+                elapsedCaption
+            }
+            Text(satsAmount)
+                .font(.system(size: compact ? 40 : 52, weight: .bold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Button("sats額をコピー") { vm.copySatsAmount() }
+                .buttonStyle(.app)
+                .frame(maxWidth: 240)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.yellow.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.yellow.opacity(0.55), lineWidth: 1.5))
+    }
+
+    private var cashNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "banknote")
+                .foregroundColor(.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("入金確認後に、現金 \(Fmt.yen(vm.totals.cashForSats)) を受け取ります")
+                    .font(.callout.weight(.semibold))
+                Text("現金分はWoSの請求額に含めません。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.orange.opacity(0.45)))
+    }
+
+    private var stepsPanel: some View {
+        Panel(title: "手順") {
+            VStack(alignment: .leading, spacing: 12) {
+                stepRow(1, "WoSで \(satsAmount) の請求を作る",
+                        "「sats額をコピー」で入力ミスを防げます")
+                stepRow(2, "お客様がsatsで支払う", nil)
+                stepRow(3, "入金を確認して「入金を確認した」を押す",
+                        vm.totals.cashForSats > 0
+                        ? "このあと現金分 \(Fmt.yen(vm.totals.cashForSats)) を受け取ります"
+                        : nil)
+            }
+        }
+    }
+
+    private func stepRow(_ number: Int, _ title: String, _ note: String?) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.white)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(Color.black))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.callout)
+                if let note {
+                    Text(note).font(.caption).foregroundColor(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var confirmButton: some View {
+        Button { vm.askSatsConfirm() } label: {
+            VStack(spacing: 3) {
+                Text("入金を確認した（済）")
+                    .font(.system(size: 20, weight: .bold))
+                Text("WoSで入金を確認してから押してください")
+                    .font(.caption)
+            }
+            .frame(maxWidth: .infinity, minHeight: 72)
+        }
+        .buttonStyle(.appPrimary)
+    }
+
+    private var secondaryActions: some View {
+        VStack(spacing: 10) {
+            if compact {
+                VStack(spacing: 10) {
+                    Button("支払方法を選び直す") { vm.reselectMethod() }.buttonStyle(.app)
+                    Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: 14) {
+                    Button("支払方法を選び直す") { vm.reselectMethod() }.buttonStyle(.app)
+                    Button("キャンセル（確認あり）") { vm.requestSuspend() }.buttonStyle(.app)
+                }
+                .frame(maxWidth: 520)
+            }
+            Text("入金確認の前だけ、選び直し・キャンセルができます。戻ってもカートは残ります。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    private var elapsedCaption: some View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
             let s = max(0, Int(ctx.date.timeIntervalSince(vm.satsStartedAt)))
-            AmountBox(label: "経過時間",
-                      value: String(format: "%02d:%02d", s / 60, s % 60),
-                      size: 16, horizontal: compact)
+            Text("経過 \(String(format: "%02d:%02d", s / 60, s % 60))")
+                .font(.caption.monospacedDigit())
+                .foregroundColor(.secondary)
         }
     }
 }
