@@ -185,10 +185,7 @@ struct MenuView: View {
                 Item(id: "csv", title: "CSV取り込み・書き出し", note: "取り込みは待機中のみ・PIN必須") {
                     vm.requirePin("CSV取り込み・書き出し") { vm.go(.csvImport) }
                 },
-                Item(id: "price", title: "価格一覧・画像なしID一覧", note: "") {
-                    vm.go(.priceList)
-                },
-                Item(id: "imageFolder", title: "画像の保存先", note: "撮影・選択した写真を originals/ などへ") {
+                Item(id: "imageFolder", title: "画像の保存先", note: "保存先の設定・Web用画像の確認") {
                     vm.go(.imageFolder)
                 },
                 Item(id: "qr", title: "商品一覧（QR生成）", note: "商品を選んで任意枚数のQRラベルを印刷") {
@@ -357,25 +354,45 @@ struct EditView: View {
     @State private var tab: Tab = .product
 
     var body: some View {
-        AdminShell("商品マスタ編集（待機中）") {
-            VStack(alignment: .leading, spacing: 14) {
-                structurePanel
-                nextStepHint
-                Picker("", selection: $tab) {
-                    ForEach(Tab.allCases) { t in Text(t.rawValue).tag(t) }
+        Group {
+            if tab == .product {
+                // 商品一覧と編集フォームを、それぞれ独立してスクロールさせる。
+                AdminShell("商品マスタ編集（待機中）", scrolls: false) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        header
+                        ProductEditor(onOpenTypes: { tab = .type })
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 420)
-                switch tab {
-                case .group: GroupEditor()
-                case .type: TypeEditor()
-                case .product: ProductEditor(onOpenTypes: { tab = .type })
+            } else {
+                AdminShell("商品マスタ編集（待機中）") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        header
+                        switch tab {
+                        case .group: GroupEditor()
+                        case .type: TypeEditor()
+                        case .product: EmptyView()
+                        }
+                    }
                 }
             }
         }
         .onAppear {
             // 種類がないと商品を登録できないので、その場合は種類タブから始める。
             if vm.types.isEmpty { tab = .type }
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            structurePanel
+            nextStepHint
+            Picker("", selection: $tab) {
+                ForEach(Tab.allCases) { t in Text(t.rawValue).tag(t) }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 420)
         }
     }
 
@@ -848,6 +865,7 @@ struct ProductEditor: View {
         } second: {
             formPanel.frame(maxWidth: compact ? .infinity : 560)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" }
         }
@@ -924,48 +942,92 @@ struct ProductEditor: View {
 
     private var listPanel: some View {
         Panel(title: listTitle) {
-            FieldHelp("商品を選ぶとフォームに読み込みます。「写真 ✓」はレジに表示できる画像がある商品です。")
-            if compact {
-                VStack(alignment: .leading, spacing: 8) {
-                    searchField
-                    typeFilter
+            VStack(alignment: .leading, spacing: 8) {
+                FieldHelp("商品を選ぶとフォームに読み込みます。「写真 ✓」はレジに表示できる画像がある商品です。")
+                if compact {
+                    VStack(alignment: .leading, spacing: 8) {
+                        searchField
+                        typeFilter
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        searchField
+                        typeFilter
+                    }
                 }
-            } else {
-                HStack(spacing: 8) {
-                    searchField
-                    typeFilter
+                // 一覧だけを独立してスクロールさせる。
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if filteredInventory.isEmpty {
+                            Text(vm.inventory.isEmpty
+                                 ? "商品がまだありません。フォームから登録してください。"
+                                 : "条件に合う商品がありません。検索語や種類を変えてください。")
+                                .font(.callout)
+                                .foregroundColor(.secondary)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開", "写真"],
+                                         widths: [65, 115, 140, 55, 55, 45, 45, 40],
+                                         header: true,
+                                         actionWidth: compact ? 0 : 88)
+                            ForEach(filteredInventory) { p in
+                                productRow(p)
+                            }
+                        }
+                        Text("既存商品の編集可: 名前・円価格・sats価格・属性・公開状態。変更不可: 商品ID・種類。在庫は手動在庫調整。商品の削除なし（非公開・在庫0で代替）。")
+                            .font(.caption).foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                listActionBar
             }
-            if filteredInventory.isEmpty {
-                Text(vm.inventory.isEmpty
-                     ? "商品がまだありません。フォームから登録してください。"
-                     : "条件に合う商品がありません。検索語や種類を変えてください。")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 8)
-            } else {
-                TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開", "写真"],
-                             widths: [65, 115, 140, 55, 55, 45, 45, 40],
-                             header: true,
-                             actionWidth: compact ? 0 : 88)
-                ForEach(filteredInventory) { p in
-                    productRow(p)
-                }
-            }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8)],
-                      alignment: .leading, spacing: 8) {
-                Button("sats価格を一括設定") { showSatsBulk = true }
-                    .buttonStyle(.app)
-                    .disabled(vm.inventory.isEmpty)
-                Button("CSV取り込み") { vm.go(.csvImport) }.buttonStyle(.app)
-                Button("CSV書き出し") { vm.exportMaster() }.buttonStyle(.app)
-                Button("価格一覧CSV") { vm.go(.priceList) }.buttonStyle(.app)
-                Button("画像なしID一覧") { vm.go(.priceList) }.buttonStyle(.app)
-            }
-            FieldHelp("「sats価格を一括設定」は、円価格ごとにsats価格をまとめて変更します。空欄の行は変更しません。")
-            Text("既存商品の編集可: 名前・円価格・sats価格・属性・公開状態。変更不可: 商品ID・種類。在庫は手動在庫調整。商品の削除なし（非公開・在庫0で代替）。")
-                .font(.caption).foregroundColor(.secondary)
         }
+        .frame(maxHeight: .infinity)
+    }
+
+    /// 一覧の下に固定する操作バー。sats一括設定を主操作として目立たせる。
+    private var listActionBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    satsBulkButton
+                    csvMenu
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    satsBulkButton
+                    csvMenu
+                }
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var satsBulkButton: some View {
+        Button { showSatsBulk = true } label: {
+            Label("sats価格を一括設定", systemImage: "bitcoinsign.circle")
+        }
+        .buttonStyle(.appPrimary)
+        .disabled(vm.inventory.isEmpty)
+        .help("同じ円価格の商品に、まとめてsats価格を設定します。空欄の行は変更しません。")
+    }
+
+    private var csvMenu: some View {
+        Menu {
+            Button("CSVを取り込む…") { vm.go(.csvImport) }
+            Button("マスタCSVを書き出す…") { vm.exportMaster() }
+            Divider()
+            Button("価格一覧CSVを書き出す…") {
+                vm.exportPriceList()
+            }
+        } label: {
+            Label("CSV入出力", systemImage: "tablecells")
+                .font(.system(size: 14))
+        }
+        .actionMenuStyle()
+        .help("CSVの取り込み・書き出し")
     }
 
     @ViewBuilder
@@ -1000,14 +1062,21 @@ struct ProductEditor: View {
         Panel {
             VStack(alignment: .leading, spacing: 12) {
                 formHeader
-                typeSection
-                basicSection
-                photoSection
-                attributeSection
-                stockSection
-                submitSection
+                // フォームだけを独立してスクロールさせる。
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        typeSection
+                        basicSection
+                        photoSection
+                        attributeSection
+                        stockSection
+                        submitSection
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
+        .frame(maxHeight: .infinity)
     }
 
     private var formHeader: some View {
@@ -2317,45 +2386,6 @@ struct StockAdjustView: View {
             vm.message = "在庫を調整しました: \(pid) → \(n)"
             newStockText = ""
             reason = ""
-        }
-    }
-}
-
-// MARK: - 価格一覧・画像なしID一覧
-
-struct PriceListView: View {
-    @EnvironmentObject var vm: AppViewModel
-
-    var body: some View {
-        AdminShell("価格一覧") {
-            AdaptiveColumns(spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("価格一覧（登録商品のみ・野良は含めない）").font(.headline)
-                    TableRowView(cells: ["product_id", "type_id", "name", "price_jpy", "price_sats"],
-                                 widths: [90, 100, 180, 80, 90], header: true)
-                    ForEach(vm.inventory) { p in
-                        TableRowView(cells: [p.id, p.typeId, p.name, "\(p.priceJpy)", p.priceSats.map { "\($0)" } ?? "（空）"],
-                                     widths: [90, 100, 180, 80, 90])
-                    }
-                    Button("価格一覧CSV出力") {
-                        vm.requirePin("価格一覧CSV") { vm.exportPriceList() }
-                    }
-                        .buttonStyle(.app)
-                        .frame(maxWidth: 280)
-                    Text("おしながきとの照合用。sats価格が空の商品を確認する。").font(.caption).foregroundColor(.secondary)
-                }
-            } second: {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("公開サイト用の画像がない商品ID").font(.headline)
-                    TableRowView(cells: ["product_id", "name"], widths: [100, 240], header: true)
-                    ForEach(vm.productsWithoutImage) { p in
-                        TableRowView(cells: [p.id, p.name], widths: [100, 240])
-                    }
-                    if vm.productsWithoutImage.isEmpty { Text("なし").foregroundColor(.secondary) }
-                    Text("保存先フォルダに `<商品ID>.jpg` がない商品IDです。先に写真を保存してください。別名（`image_ref`）で保存されている画像は、元ファイルを残し、保存先フォルダに `<商品ID>.jpg` という名前でコピーしてください。Web用は、ここに載っていない商品の `<商品ID>.jpg` を static/images へコピーしてください。")
-                        .font(.caption).foregroundColor(.secondary)
-                }
-            }
         }
     }
 }

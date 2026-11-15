@@ -104,6 +104,27 @@ extension ButtonStyle where Self == AppButtonStyle {
     static var appPrimary: AppButtonStyle { AppButtonStyle(primary: true) }
 }
 
+/// `Menu` を「その他の操作」ボタンと同じ見た目にする。
+/// ラベル内に背景を付けるとシステムのシェブロン領域が分かれて見えるため、外側に付ける。
+struct ActionMenuStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .frame(minHeight: 40)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.black.opacity(0.7), lineWidth: 1)
+            )
+    }
+}
+
+extension View {
+    func actionMenuStyle() -> some View { modifier(ActionMenuStyle()) }
+}
+
 // MARK: - 汎用部品
 
 struct Panel<Content: View>: View {
@@ -785,24 +806,40 @@ struct AdminShell<Content: View>: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
     let title: String
+    /// false のときは外側にスクロールを付けない。画面内で独立スクロールを組みたいときに使う。
+    let scrolls: Bool
     let content: Content
 
-    init(_ title: String, @ViewBuilder content: () -> Content) {
+    init(_ title: String, scrolls: Bool = true, @ViewBuilder content: () -> Content) {
         self.title = title
+        self.scrolls = scrolls
         self.content = content()
     }
 
     var body: some View {
         VStack(spacing: 0) {
             TopBar(title, state: compact ? nil : vm.saleState.label) {
-                Button(compact ? "メニュー" : "メニューへ") { vm.exitAdmin() }
-                    .buttonStyle(.app)
-                    .frame(maxWidth: compact ? 96 : 140)
+                HStack(spacing: 8) {
+                    if vm.canGoBack {
+                        Button("戻る") { vm.goBack() }
+                            .buttonStyle(.app)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    Button(compact ? "メニュー" : "メニューへ") { vm.exitAdmin() }
+                        .buttonStyle(.app)
+                        .frame(maxWidth: compact ? 96 : 140)
+                }
             }
-            ScrollView {
+            if scrolls {
+                ScrollView {
+                    content
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
                 content
                     .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             MessageBar()
         }

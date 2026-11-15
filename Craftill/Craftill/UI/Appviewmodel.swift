@@ -11,7 +11,7 @@ import UIKit
 
 enum Screen: Hashable {
     case initialLaunch, register, menu, edit, csvImport, report
-    case salesHistory, stockAdjust, priceList, qrLabels, sync, dataManagement, imageFolder
+    case salesHistory, stockAdjust, qrLabels, sync, dataManagement, imageFolder
 }
 
 enum Dialog: Identifiable {
@@ -126,6 +126,8 @@ extension SaleState {
 final class AppViewModel: ObservableObject {
     // 画面
     @Published var screen: Screen = .initialLaunch
+    /// 管理画面の「戻る」用。メニューなどへ移動したら空にする。
+    @Published private(set) var screenHistory: [Screen] = []
     @Published var message: String = ""
     @Published var dialog: Dialog? = nil
     @Published var dialogPin: String = ""
@@ -346,6 +348,7 @@ final class AppViewModel: ObservableObject {
         context = ctx
         cashReceived = active.cashReceived
         satsStartedAt = active.satsStartedAt ?? Date()
+        screenHistory.removeAll()
         screen = .register
     }
 
@@ -457,20 +460,38 @@ final class AppViewModel: ObservableObject {
 
     // MARK: 画面遷移
 
+    var canGoBack: Bool { !screenHistory.isEmpty }
+
     func go(_ s: Screen) {
         // 登録直後のQRフォーカスは、QR画面を離れたら解除する。
         if s != .qrLabels { qrFocusProductId = nil }
+        guard s != screen else { return }
+        // レジ・起動画面は「戻る」対象にしない。メニューへ戻る操作は履歴を消す。
+        if s == .register || s == .menu {
+            screenHistory.removeAll()
+        } else if screen != .initialLaunch && screen != .register {
+            screenHistory.append(screen)
+        }
         screen = s
+    }
+
+    /// 管理画面の「戻る」。直前の画面へ戻す。
+    func goBack() {
+        guard let previous = screenHistory.popLast() else { return }
+        qrFocusProductId = nil
+        screen = previous
     }
 
     func openMenu() {
         guard saleState == .idle else { return }
         qrFocusProductId = nil
+        screenHistory.removeAll()
         screen = .menu
     }
 
     func exitAdmin() {
         qrFocusProductId = nil
+        screenHistory.removeAll()
         screen = pin == nil ? .initialLaunch : .menu
     }
 
@@ -482,6 +503,7 @@ final class AppViewModel: ObservableObject {
         isUnlocked = true
         verifiedPin = a
         message = saved ? "PINを設定しました" : "PINを保存できませんでした（この起動中のみ有効）"
+        screenHistory.removeAll()
         screen = .register
     }
 
@@ -511,6 +533,7 @@ final class AppViewModel: ObservableObject {
         verifiedPin = ""
         pinPrompt = nil
         dialog = nil
+        screenHistory.removeAll()
     }
 
     func requirePin(_ title: String, _ action: @escaping () -> Void) {
@@ -888,6 +911,7 @@ final class AppViewModel: ObservableObject {
         cashReceived = 0
         satsStartedAt = Date()
         done = nil
+        screenHistory.removeAll()
         screen = .menu
         loadMaster()
         ids = Self.makeSequencer(sales: sales, movements: movements,

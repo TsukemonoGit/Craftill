@@ -39,7 +39,6 @@ struct RootView: View {
         case .report: ReportView()
         case .salesHistory: SalesHistoryView()
         case .stockAdjust: StockAdjustView()
-        case .priceList: PriceListView()
         case .qrLabels: QRLabelView()
         case .sync: SyncView()
         case .dataManagement: DataManagementView()
