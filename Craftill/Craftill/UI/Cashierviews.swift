@@ -533,14 +533,11 @@ struct CashEntryView: View {
                 }
             } else {
                 AdaptiveHStack(breakpoint: 820, spacing: 28) {
-                    VStack(spacing: 12) {
-                        if mixed { satsConfirmedBox }
-                        requestBox
-                        VStack(spacing: 8) {
-                            receivedBox
-                            quickCashButtons
-                        }
-                        changeAndConfirm
+                    // ウィンドウが低いときも「確定」「会計中断」へ届くように、
+                    // 左列だけを独立してスクロールさせる（キーパッドは固定）。
+                    ScrollView(showsIndicators: false) {
+                        amountColumn
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } second: {
                     keypadPanel
@@ -549,6 +546,19 @@ struct CashEntryView: View {
                 .padding(24)
             }
             MessageBar()
+        }
+    }
+
+    /// 金額の確認と確定操作。左列の内容。
+    private var amountColumn: some View {
+        VStack(spacing: 12) {
+            if mixed { satsConfirmedBox }
+            requestBox
+            VStack(spacing: 8) {
+                receivedBox
+                quickCashButtons
+            }
+            changeAndConfirm
         }
     }
 
