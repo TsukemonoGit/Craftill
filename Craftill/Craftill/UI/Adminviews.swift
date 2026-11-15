@@ -353,34 +353,22 @@ struct EditView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
     @State private var tab: Tab = .product
+    /// 構成の説明は常時表示せず、必要なときだけ開く（一覧・フォームの表示領域を確保する）。
+    @State private var showStructureHelp = false
 
     var body: some View {
-        Group {
-            if tab == .product {
-                // 広い画面では一覧とフォームをそれぞれ独立スクロールさせる。
-                // コンパクト幅では固定部分が高さを使い切って送信操作に届かなくなるため、
-                // 外側1本のスクロールに切り替える。
-                AdminShell("商品マスタ編集（待機中）", scrolls: !compact) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        header
-                        ProductEditor(onOpenTypes: { tab = .type })
-                            .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity,
+        // ヘッダーを固定し、その下の一覧/フォームだけをスクロールさせる。
+        // 狭い画面でもペイン切り替え時にスクロール位置が残らないよう、
+        // MasterEditorLayout 側でペインごとにスクロール領域を作り直す。
+        AdminShell("商品マスタ編集（待機中）", scrolls: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                editor
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
                            alignment: .topLeading)
-                }
-            } else {
-                AdminShell("商品マスタ編集（待機中）") {
-                    VStack(alignment: .leading, spacing: 14) {
-                        header
-                        switch tab {
-                        case .group: GroupEditor()
-                        case .type: TypeEditor()
-                        case .product: EmptyView()
-                        }
-                    }
-                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity,
+                   alignment: .topLeading)
         }
         .onAppear {
             // 種類がないと商品を登録できないので、その場合は種類タブから始める。
@@ -388,9 +376,29 @@ struct EditView: View {
         }
     }
 
+    @ViewBuilder
+    private var editor: some View {
+        switch tab {
+        case .group: GroupEditor()
+        case .type: TypeEditor()
+        case .product: ProductEditor(onOpenTypes: { tab = .type })
+        }
+    }
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            structurePanel
+        VStack(alignment: .leading, spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    stepSummary
+                    Spacer(minLength: 8)
+                    helpToggle
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    stepSummary
+                    helpToggle
+                }
+            }
+            if showStructureHelp { structurePanel }
             nextStepHint
             Picker("", selection: $tab) {
                 ForEach(Tab.allCases) { t in Text(t.rawValue).tag(t) }
@@ -401,6 +409,54 @@ struct EditView: View {
     }
 
     // MARK: 説明
+
+    /// 3階層の登録状況。件数を見れば、どのタブから進めるかが分かる。
+    private var stepSummary: some View {
+        HStack(spacing: 6) {
+            stepChip("1", "グループ", vm.groups.count)
+            Image(systemName: "chevron.right")
+                .font(.caption2).foregroundColor(.secondary)
+            stepChip("2", "種類", vm.types.count)
+            Image(systemName: "chevron.right")
+                .font(.caption2).foregroundColor(.secondary)
+            stepChip("3", "商品", vm.inventory.count)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func stepChip(_ number: String, _ title: String, _ count: Int) -> some View {
+        HStack(spacing: 5) {
+            Text(number)
+                .font(.caption2.bold())
+                .foregroundColor(.white)
+                .frame(width: 16, height: 16)
+                .background(Circle().fill(Color.accentColor))
+            Text(title).font(.caption.bold())
+            Text("\(count)")
+                .font(.caption.monospacedDigit())
+                .foregroundColor(count == 0 && title != "グループ" ? .orange : .secondary)
+        }
+        .lineLimit(1)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color.accentColor.opacity(0.08)))
+        .overlay(Capsule().stroke(Color.accentColor.opacity(0.22)))
+    }
+
+    private var helpToggle: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { showStructureHelp.toggle() }
+        } label: {
+            if compact {
+                Label(showStructureHelp ? "構成を閉じる" : "構成", systemImage: "info.circle")
+                    .font(.caption)
+            } else {
+                Text(showStructureHelp ? "構成の説明を閉じる" : "構成の説明")
+            }
+        }
+        .buttonStyle(.app)
+        .fixedSize(horizontal: true, vertical: false)
+    }
 
     private var structurePanel: some View {
         Panel(title: "商品マスタの構成（グループ → 種類 → 商品）") {
@@ -413,13 +469,6 @@ struct EditView: View {
                 structureRow("3", "商品", "実際にレジで売る商品。名前・価格・初期在庫",
                              "例: ステッカー まる / 300円")
             }
-            HStack(spacing: 16) {
-                Text("登録済み: グループ \(vm.groups.count)件")
-                Text("種類 \(vm.types.count)件")
-                Text("商品 \(vm.inventory.count)件")
-            }
-            .font(.caption)
-            .foregroundColor(.secondary)
         }
     }
 
@@ -468,42 +517,126 @@ struct GroupEditor: View {
     @State private var gid = ""
     @State private var label = ""
     @State private var editing = false
+    @State private var pane: MasterEditorPane = .list
+    @State private var pendingDelete: ProductGroup? = nil
+
+    private var canSave: Bool {
+        !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (editing || !gid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
 
     var body: some View {
-        AdaptiveColumns(spacing: 16) {
-            Panel(title: "グループ一覧") {
+        MasterEditorLayout(pane: $pane, formWidth: 420) {
+            listPanel
+        } form: {
+            formPanel
+        }
+        .onAppear {
+            if vm.groups.isEmpty { pane = .form }
+        }
+        .confirmationDialog("グループを削除しますか？",
+                            isPresented: Binding(get: { pendingDelete != nil },
+                                                 set: { if !$0 { pendingDelete = nil } }),
+                            presenting: pendingDelete) { g in
+            Button("削除", role: .destructive) {
+                vm.deleteGroup(g.groupId)
+                if editing && gid == g.groupId { reset() }
+                pendingDelete = nil
+            }
+            Button("キャンセル", role: .cancel) { pendingDelete = nil }
+        } message: { g in
+            Text("「\(g.label)」を削除します。この操作は取り消せません。")
+        }
+    }
+
+    private var listPanel: some View {
+        EditorListPanel(title: "グループ一覧（\(vm.groups.count)件）") {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("任意。行の「ラベル変更」で編集できます。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 8)
+                Button("＋ 追加") { startNew() }
+                    .buttonStyle(.app)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if !vm.groups.isEmpty {
                 TableRowView(cells: ["グループID", "ラベル", "使用状況"],
                              widths: [120, 180, 90],
                              header: true,
                              actionWidth: compact ? 0 : 200)
-                ForEach(vm.groups) { g in
-                    groupRow(g)
-                }
-                Text("削除: 種類または販売明細から参照されている場合は不可。ラベル変更は過去の集計表示にも反映される。")
-                    .font(.caption).foregroundColor(.secondary)
             }
-        } second: {
-            Panel(title: editing ? "ラベル変更" : "グループを追加") {
-                FieldHelp("グループは種類をまとめる見出しです（任意）。例: 「もの製品」の中に「ステッカー」「キーホルダー」を入れます。")
-                LabeledField(label: "グループID（半角英数字・_。追加後変更不可）", text: $gid, required: true, disabled: editing)
+        } content: {
+            VStack(alignment: .leading, spacing: 8) {
+                if vm.groups.isEmpty {
+                    EmptyStateView(icon: "folder",
+                                   title: "グループはまだありません",
+                                   message: "グループは任意です。種類をまとめたいときに追加してください。")
+                    Button("グループを追加する") { startNew() }
+                        .buttonStyle(.appPrimary)
+                        .frame(maxWidth: .infinity)
+                } else {
+                    ForEach(vm.groups) { g in
+                        groupRow(g)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } footer: {
+            Text("使用中のグループは削除できません。ラベル変更は過去の集計表示にも反映されます。")
+                .font(.caption).foregroundColor(.secondary)
+        }
+    }
+
+    private var formPanel: some View {
+        EditorFormPanel {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(editing ? "グループのラベル変更" : "グループを追加")
+                    .font(.title3.bold())
+                FieldHelp(editing
+                    ? "グループIDは変更できません。表示名（ラベル）だけを変更します。"
+                    : "グループは種類をまとめる見出しです（任意）。")
+            }
+        } content: {
+            FormSection("グループ情報") {
+                LabeledField(label: "グループID（半角英数字・_。追加後変更不可）",
+                             text: $gid, required: true, disabled: editing)
                 FieldHelp("グループIDは内部管理用です。画面や集計に出る名前は「ラベル」です。")
-                LabeledField(label: "ラベル", text: $label, required: true)
-                Button(editing ? "ラベルを保存" : "保存") { save() }
-                    .buttonStyle(.appPrimary)
-                if editing {
-                    Button("変更をやめる") { reset() }.buttonStyle(.app)
+                LabeledField(label: "ラベル", text: $label, required: true,
+                             placeholder: "例: もの製品")
+            }
+        } footer: {
+            VStack(alignment: .leading, spacing: 8) {
+                if !canSave {
+                    Text(editing ? "ラベルを入力してください。" : "グループIDとラベルを入力してください。")
+                        .font(.caption).foregroundColor(.orange)
+                }
+                HStack(spacing: 8) {
+                    Button(editing ? "ラベルを保存" : "グループを追加") { save() }
+                        .buttonStyle(.appPrimary)
+                        .frame(maxWidth: .infinity, minHeight: 32)
+                        .disabled(!canSave)
+                    if editing {
+                        Button("変更をやめる") { cancelEditing() }
+                            .buttonStyle(.app)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                if compact {
+                    Button("一覧に戻る") { pane = .list }
+                        .buttonStyle(.app)
                 }
             }
-            .frame(maxWidth: compact ? .infinity : 420)
         }
     }
 
     @ViewBuilder
     private func groupRow(_ g: ProductGroup) -> some View {
         let cells = [g.groupId, g.label, vm.isGroupInUse(g.groupId) ? "使用中" : "未使用"]
+        let highlighted = editing && gid == g.groupId
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                TableRowView(cells: cells, widths: [120, 180, 90])
+                TableRowView(cells: cells, widths: [120, 180, 90], highlighted: highlighted)
                 HStack(spacing: 8) {
                     editButton(g)
                     deleteButton(g)
@@ -511,7 +644,8 @@ struct GroupEditor: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            TableRowView(cells: cells, widths: [120, 180, 90], actionWidth: 200) {
+            TableRowView(cells: cells, widths: [120, 180, 90],
+                         actionWidth: 200, highlighted: highlighted) {
                 HStack(spacing: 8) {
                     editButton(g)
                     deleteButton(g)
@@ -521,20 +655,33 @@ struct GroupEditor: View {
     }
 
     private func editButton(_ g: ProductGroup) -> some View {
-        Button("ラベル変更") {
-            gid = g.groupId
-            label = g.label
-            editing = true
-        }
-        .buttonStyle(.app)
-        .frame(width: 104)
+        Button("ラベル変更") { load(g) }
+            .buttonStyle(.app)
+            .frame(width: 104)
     }
 
     private func deleteButton(_ g: ProductGroup) -> some View {
-        Button("削除") { vm.deleteGroup(g.groupId) }
+        Button("削除") { pendingDelete = g }
             .buttonStyle(.app)
             .frame(width: 80)
             .disabled(vm.isGroupInUse(g.groupId))
+    }
+
+    private func load(_ g: ProductGroup) {
+        gid = g.groupId
+        label = g.label
+        editing = true
+        pane = .form
+    }
+
+    private func startNew() {
+        reset()
+        pane = .form
+    }
+
+    private func cancelEditing() {
+        reset()
+        if compact { pane = .list }
     }
 
     private func save() {
@@ -542,6 +689,7 @@ struct GroupEditor: View {
         if let err { vm.message = err; return }
         vm.message = editing ? "ラベルを変更しました" : "グループを追加しました"
         reset()
+        if compact { pane = .list }
     }
 
     private func reset() {
@@ -565,16 +713,44 @@ struct TypeEditor: View {
     @State private var groupId = ""
     @State private var nextNoText = "1"
     @State private var editingId: String? = nil
+    @State private var pane: MasterEditorPane = .list
 
     private var previewID: String {
         let d = Int(digitsText) ?? 0
-        let n = Int(nextNoText) ?? 0
+        let n = nextNoValue ?? 0
         guard d >= 1, n >= 1, !prefix.isEmpty else { return "―" }
         let num = String(n)
         return "\(prefix)-" + String(repeating: "0", count: max(0, d - num.count)) + num
     }
 
     private var locked: Bool { editingId.map { vm.isTypeLocked($0) } ?? false }
+
+    private var nextNoValue: Int? {
+        let text = nextNoText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { return 1 }
+        return Int(text)
+    }
+
+    private var validationHint: String? {
+        if editingId == nil && typeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "種類IDを入力してください。"
+        }
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "表示名を入力してください。"
+        }
+        if prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "ID接頭辞を入力してください。"
+        }
+        if (Int(digitsText) ?? 0) < 1 {
+            return "ID桁数は1以上の整数で入力してください。"
+        }
+        if editingId == nil, (nextNoValue ?? 0) < 1 {
+            return "開始番号は1以上の整数で入力してください。"
+        }
+        return nil
+    }
+
+    private var canSave: Bool { validationHint == nil }
 
     private var stockModeHelp: String {
         switch mode {
@@ -588,65 +764,153 @@ struct TypeEditor: View {
     }
 
     var body: some View {
-        AdaptiveColumns(spacing: 16) {
-            Panel(title: "種類一覧") {
-                FieldHelp("行の「編集」で内容をフォームに読み込みます。種類を追加すると、その種類の商品を登録できるようになります。")
+        MasterEditorLayout(pane: $pane, formWidth: 500) {
+            listPanel
+        } form: {
+            formPanel
+        }
+        .onAppear {
+            if vm.types.isEmpty { pane = .form }
+        }
+    }
+
+    private var listPanel: some View {
+        EditorListPanel(title: "種類一覧（\(vm.types.count)件）") {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("行の「編集」で内容を読み込みます。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 8)
+                Button("＋ 追加") { startNew() }
+                    .buttonStyle(.app)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            if !vm.types.isEmpty {
                 TableRowView(cells: ["種類ID", "表示名", "接頭辞", "桁", "在庫の扱い", "グループ", "next_no"],
                              widths: [90, 140, 60, 40, 110, 110, 70],
                              header: true,
                              actionWidth: compact ? 0 : 88)
-                ForEach(vm.types) { t in
-                    typeRow(t)
-                }
-                Text("編集可（既存）: 表示名・属性ラベル・グループ。接頭辞・桁数・在庫の扱いは、商品または販売記録がある種類では変更不可。next_no は減らさない。")
-                    .font(.caption).foregroundColor(.secondary)
             }
-        } second: {
-            Panel(title: editingId == nil ? "種類を追加" : "種類を編集") {
-                FieldHelp("種類は商品の分類です。商品IDの付け方と、在庫の数え方をここで決めます。")
-                LabeledField(label: "種類ID（半角英数字・_）", text: $typeId, required: true, disabled: editingId != nil)
-                FieldHelp("種類IDは内部管理用です。レジのタブに出る名前は「表示名」です。グループに関わらず重複できません。")
-                LabeledField(label: "表示名", text: $name, required: true)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
-                          alignment: .leading, spacing: 8) {
-                    LabeledField(label: "ID接頭辞（種類間で一意）", text: $prefix, required: true, disabled: locked)
-                    LabeledField(label: "ID桁数", text: $digitsText, required: true, disabled: locked)
+        } content: {
+            VStack(alignment: .leading, spacing: 8) {
+                if vm.types.isEmpty {
+                    EmptyStateView(icon: "square.grid.2x2",
+                                   title: "種類はまだありません",
+                                   message: "商品を登録するには、先に種類を作成してください。")
+                    Button("種類を追加する") { startNew() }
+                        .buttonStyle(.appPrimary)
+                        .frame(maxWidth: .infinity)
+                } else {
+                    ForEach(vm.types) { t in
+                        typeRow(t)
+                    }
                 }
-                FieldHelp("商品IDは「接頭辞-連番」になります。例: 接頭辞 ST・3桁 → ST-001。接頭辞は、グループに関わらず重複できません。")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("在庫の扱い").font(.caption).foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } footer: {
+            Text("商品・販売記録がある種類は、接頭辞・桁数・在庫の扱いを変更できません。next_no は減らせません。")
+                .font(.caption).foregroundColor(.secondary)
+        }
+    }
+
+    private var formPanel: some View {
+        EditorFormPanel {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(editingId == nil ? "種類を追加" : "種類を編集")
+                    .font(.title3.bold())
+                FieldHelp(editingId == nil
+                    ? "種類は商品の分類です。商品IDの付け方と、在庫の数え方をここで決めます。"
+                    : "表示名・属性ラベル・グループを変更できます。")
+                if locked {
+                    Text("商品または販売記録があるため、接頭辞・桁数・在庫の扱いは変更できません。")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+        } content: {
+            VStack(alignment: .leading, spacing: 12) {
+                FormSection("基本情報") {
+                    LabeledField(label: "種類ID（半角英数字・_）", text: $typeId,
+                                 required: true, disabled: editingId != nil)
+                    FieldHelp("内部管理用のIDです。レジのタブに出る名前は「表示名」です。")
+                    LabeledField(label: "表示名", text: $name, required: true,
+                                 placeholder: "例: ステッカー")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("所属グループ").font(.caption).foregroundColor(.secondary)
+                        Picker("", selection: $groupId) {
+                            Text("（なし）").tag("")
+                            ForEach(vm.groups) { g in Text(g.label).tag(g.groupId) }
+                        }
+                        .labelsHidden()
+                    }
+                    FieldHelp("グループに入れると、レジのタブ名が「グループ｜種類」になります。グループなしでも登録できます。")
+                }
+
+                FormSection("商品IDの付け方") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 8)],
+                              alignment: .leading, spacing: 8) {
+                        LabeledField(label: "ID接頭辞（種類間で一意）", text: $prefix,
+                                     required: true, disabled: locked)
+                        LabeledField(label: "ID桁数", text: $digitsText,
+                                     required: true, disabled: locked)
+                    }
+                    FieldHelp("商品IDは「接頭辞-連番」になります。例: 接頭辞 ST・3桁 → ST-001。")
+                    LabeledField(label: "開始番号 next_no（任意）", text: $nextNoText,
+                                 disabled: editingId != nil)
+                    FieldHelp("次に発番する番号です。空欄なら1から始まります。")
+                }
+
+                FormSection("在庫の扱い") {
                     Picker("", selection: $mode) {
                         ForEach(StockMode.allCases, id: \.self) { m in Text(m.label).tag(m) }
                     }
                     .labelsHidden()
                     .disabled(locked)
+                    FieldHelp(stockModeHelp)
                 }
-                FieldHelp(stockModeHelp)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 8)],
-                          alignment: .leading, spacing: 8) {
-                    LabeledField(label: "属性ラベル1", text: $l1)
-                    LabeledField(label: "属性ラベル2", text: $l2)
-                    LabeledField(label: "属性ラベル3", text: $l3)
-                }
-                FieldHelp("属性ラベルは、商品ごとに色・模様などを記録する項目名です。使わない項目は空欄にします。")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("所属グループ").font(.caption).foregroundColor(.secondary)
-                    Picker("", selection: $groupId) {
-                        Text("（なし）").tag("")
-                        ForEach(vm.groups) { g in Text(g.label).tag(g.groupId) }
+
+                FormSection("属性ラベル", "商品ごとに色・模様などを記録する項目名") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 8)],
+                              alignment: .leading, spacing: 8) {
+                        LabeledField(label: "属性ラベル1", text: $l1)
+                        LabeledField(label: "属性ラベル2", text: $l2)
+                        LabeledField(label: "属性ラベル3", text: $l3)
                     }
-                    .labelsHidden()
-                }
-                FieldHelp("グループに入れると、レジのタブ名が「グループ｜種類」になります。グループなしでも登録できます。")
-                LabeledField(label: "開始番号 next_no（任意）", text: $nextNoText, disabled: editingId != nil)
-                FieldHelp("次に発番する番号です。通常は1のままで問題ありません。")
-                InfoBox(text: "ID形式プレビュー: \(previewID)", size: 14, tint: .yellow)
-                Button("保存") { save() }.buttonStyle(.appPrimary)
-                if editingId != nil {
-                    Button("編集をやめる") { reset() }.buttonStyle(.app)
+                    FieldHelp("使わない項目は空欄にします。左から順に埋めてください。")
                 }
             }
-            .frame(maxWidth: compact ? .infinity : 480)
+        } footer: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("ID形式プレビュー").font(.caption).foregroundColor(.secondary)
+                    Text(previewID)
+                        .font(.system(.callout, design: .monospaced).bold())
+                    Spacer(minLength: 8)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.12)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.35)))
+                if let hint = validationHint {
+                    Text(hint).font(.caption).foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack(spacing: 8) {
+                    Button(editingId == nil ? "種類を追加" : "変更を保存") { save() }
+                        .buttonStyle(.appPrimary)
+                        .frame(maxWidth: .infinity, minHeight: 32)
+                        .disabled(!canSave)
+                    if editingId != nil {
+                        Button("編集をやめる") { cancelEditing() }
+                            .buttonStyle(.app)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                if compact {
+                    Button("一覧に戻る") { pane = .list }
+                        .buttonStyle(.app)
+                }
+            }
         }
     }
 
@@ -654,14 +918,17 @@ struct TypeEditor: View {
     private func typeRow(_ t: ProductType) -> some View {
         let cells = [t.typeId, t.name, t.idPrefix, "\(t.idDigits)", t.stockMode.label,
                      vm.groupLabel(t.groupId), "\(t.nextNo)"]
+        let highlighted = editingId == t.typeId
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                TableRowView(cells: cells, widths: [90, 140, 60, 40, 110, 110, 70])
+                TableRowView(cells: cells, widths: [90, 140, 60, 40, 110, 110, 70],
+                             highlighted: highlighted)
                 editButton(t)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            TableRowView(cells: cells, widths: [90, 140, 60, 40, 110, 110, 70], actionWidth: 88) {
+            TableRowView(cells: cells, widths: [90, 140, 60, 40, 110, 110, 70],
+                         actionWidth: 88, highlighted: highlighted) {
                 editButton(t)
             }
         }
@@ -685,6 +952,17 @@ struct TypeEditor: View {
         l3 = t.attrLabel3 ?? ""
         groupId = t.groupId ?? ""
         nextNoText = "\(t.nextNo)"
+        pane = .form
+    }
+
+    private func startNew() {
+        reset()
+        pane = .form
+    }
+
+    private func cancelEditing() {
+        reset()
+        if compact { pane = .list }
     }
 
     private func save() {
@@ -694,11 +972,12 @@ struct TypeEditor: View {
                                 mode: mode, labels: [l1, l2, l3], groupId: groupId)
         } else {
             err = vm.createType(typeId: typeId, name: name, prefix: prefix, digits: Int(digitsText) ?? 0, mode: mode,
-                             labels: [l1, l2, l3], groupId: groupId, nextNo: Int(nextNoText) ?? 0)
+                             labels: [l1, l2, l3], groupId: groupId, nextNo: nextNoValue ?? 0)
         }
         if let err { vm.message = err; return }
         vm.message = editingId == nil ? "種類を追加しました" : "種類を更新しました"
         reset()
+        if compact { pane = .list }
     }
 
     private func reset() {
@@ -741,6 +1020,7 @@ struct ProductEditor: View {
     @State private var searchText = ""
     @State private var filterTypeId = ""
     @State private var showSatsBulk = false
+    @State private var pane: MasterEditorPane = .list
 
     init(onOpenTypes: (() -> Void)? = nil) {
         self.onOpenTypes = onOpenTypes
@@ -864,14 +1144,14 @@ struct ProductEditor: View {
     }
 
     var body: some View {
-        AdaptiveColumns(spacing: 16) {
+        MasterEditorLayout(pane: $pane, formWidth: 560) {
             listPanel
-        } second: {
-            formPanel.frame(maxWidth: compact ? .infinity : 560)
+        } form: {
+            formPanel
         }
-        .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity, alignment: .topLeading)
         .onAppear {
             if typeId.isEmpty { typeId = vm.types.first?.typeId ?? "" }
+            if vm.inventory.isEmpty { pane = .form }
         }
         .onChange(of: typeId) { _, _ in
             // 種類を変えたとき、新しい種類に存在しない属性値を残さない。
@@ -945,58 +1225,63 @@ struct ProductEditor: View {
     }
 
     private var listPanel: some View {
-        Panel(title: listTitle) {
-            VStack(alignment: .leading, spacing: 8) {
-                FieldHelp("商品を選ぶとフォームに読み込みます。「写真 ✓」はレジに表示できる画像がある商品です。")
-                if compact {
-                    VStack(alignment: .leading, spacing: 8) {
-                        searchField
-                        typeFilter
-                    }
-                } else {
-                    HStack(spacing: 8) {
-                        searchField
-                        typeFilter
-                    }
-                }
-                listContent
-                listActionBar
+        EditorListPanel(title: listTitle) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("行の「編集」でフォームに読み込みます。「写真 ✓」は表示できる画像がある商品です。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 8)
+                Button("＋ 商品を追加") { startNew() }
+                    .buttonStyle(.app)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .disabled(vm.types.isEmpty)
             }
-        }
-        .frame(maxHeight: compact ? nil : .infinity)
-    }
-
-    /// 広い画面では一覧だけを独立してスクロールさせる。
-    /// コンパクト幅では外側のスクロールに任せる（内側を持つと高さが潰れる）。
-    @ViewBuilder
-    private var listContent: some View {
-        if compact {
+            if compact {
+                VStack(alignment: .leading, spacing: 8) {
+                    searchField
+                    typeFilter
+                }
+            } else {
+                HStack(spacing: 8) {
+                    searchField
+                    typeFilter
+                }
+            }
+            if !filteredInventory.isEmpty {
+                TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開", "写真"],
+                             widths: [65, 115, 140, 55, 55, 45, 45, 40],
+                             header: true,
+                             actionWidth: compact ? 0 : 88)
+            }
+        } content: {
             listRows
-        } else {
-            ScrollView { listRows }
+        } footer: {
+            listActionBar
         }
     }
 
     private var listRows: some View {
         VStack(alignment: .leading, spacing: 8) {
             if filteredInventory.isEmpty {
-                Text(vm.inventory.isEmpty
-                     ? "商品がまだありません。フォームから登録してください。"
-                     : "条件に合う商品がありません。検索語や種類を変えてください。")
-                    .font(.callout)
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if vm.inventory.isEmpty {
+                    EmptyStateView(icon: "shippingbox",
+                                   title: "商品はまだありません",
+                                   message: "フォームから商品を追加してください。") {
+                        Button("商品を追加する") { startNew() }
+                            .buttonStyle(.appPrimary)
+                            .disabled(vm.types.isEmpty)
+                    }
+                } else {
+                    EmptyStateView(icon: "magnifyingglass",
+                                   title: "条件に合う商品がありません",
+                                   message: "検索語や種類を変えてください。")
+                }
             } else {
-                TableRowView(cells: ["商品ID", "種類", "商品名", "円", "sats", "在庫", "公開", "写真"],
-                             widths: [65, 115, 140, 55, 55, 45, 45, 40],
-                             header: true,
-                             actionWidth: compact ? 0 : 88)
                 ForEach(filteredInventory) { p in
                     productRow(p)
                 }
             }
-            Text("既存商品の編集可: 名前・円価格・sats価格・属性・公開状態。変更不可: 商品ID・種類。在庫は手動在庫調整。商品の削除なし（非公開・在庫0で代替）。")
+            Text("商品ID・種類は変更できません。在庫は「手動在庫調整」で変更します。商品の削除はありません（非公開・在庫0で代替）。")
                 .font(.caption).foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1005,17 +1290,14 @@ struct ProductEditor: View {
 
     /// 一覧の下に固定する操作バー。sats一括設定を主操作として目立たせる。
     private var listActionBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider()
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    satsBulkButton
-                    csvMenu
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    satsBulkButton
-                    csvMenu
-                }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                satsBulkButton
+                csvMenu
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                satsBulkButton
+                csvMenu
             }
         }
         .padding(.top, 2)
@@ -1053,14 +1335,17 @@ struct ProductEditor: View {
                      p.stock.map { "\($0)" } ?? "―",
                      p.isPublic ? "1" : "0",
                      p.hasDisplayImage ? "✓" : "―"]
+        let highlighted = editingId == p.id
         if compact {
             VStack(alignment: .leading, spacing: 6) {
-                TableRowView(cells: cells, widths: [65, 115, 140, 55, 55, 45, 45, 40])
+                TableRowView(cells: cells, widths: [65, 115, 140, 55, 55, 45, 45, 40],
+                             highlighted: highlighted)
                 editButton(p)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } else {
-            TableRowView(cells: cells, widths: [65, 115, 140, 55, 55, 45, 45, 40], actionWidth: 88) {
+            TableRowView(cells: cells, widths: [65, 115, 140, 55, 55, 45, 45, 40],
+                         actionWidth: 88, highlighted: highlighted) {
                 editButton(p)
             }
         }
@@ -1072,26 +1357,20 @@ struct ProductEditor: View {
             .frame(width: 80)
     }
 
+    private func startNew() {
+        reset(keepType: true)
+        pane = .form
+    }
+
     // MARK: フォーム
 
     private var formPanel: some View {
-        Panel {
-            VStack(alignment: .leading, spacing: 12) {
-                formHeader
-                formContent
-            }
-        }
-        .frame(maxHeight: compact ? nil : .infinity)
-    }
-
-    /// 広い画面ではフォームだけを独立してスクロールさせる。
-    /// コンパクト幅では外側のスクロールに任せる（内側を持つと送信操作まで届かなくなる）。
-    @ViewBuilder
-    private var formContent: some View {
-        if compact {
+        EditorFormPanel {
+            formHeader
+        } content: {
             formFields
-        } else {
-            ScrollView { formFields }
+        } footer: {
+            formFooter
         }
     }
 
@@ -1102,9 +1381,49 @@ struct ProductEditor: View {
             photoSection
             attributeSection
             stockSection
-            submitSection
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 常に表示する登録・更新操作。入力欄をスクロールしても送信操作に届く。
+    private var formFooter: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(editingId == nil ? "商品ID（自動）" : "商品ID（変更不可）")
+                    .font(.caption).foregroundColor(.secondary)
+                Text(idPreview)
+                    .font(.system(.headline, design: .monospaced))
+                    .foregroundColor(idPreviewColor)
+            }
+            if let hint = validationHint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 8) {
+                Button(editingId == nil ? "内容を確認して登録" : "内容を確認して更新") {
+                    showConfirm = true
+                }
+                .buttonStyle(.appPrimary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .disabled(!canSubmit)
+                if editingId != nil {
+                    Button("編集をやめる") { cancelEditing() }
+                        .buttonStyle(.app)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            if compact {
+                Button("一覧に戻る") { pane = .list }
+                    .buttonStyle(.app)
+            }
+        }
+    }
+
+    private func cancelEditing() {
+        reset(keepType: true)
+        if compact { pane = .list }
     }
 
     private var formHeader: some View {
@@ -1116,6 +1435,7 @@ struct ProductEditor: View {
                 if editingId != nil {
                     Button(compact ? "新規" : "新規商品に切り替え") { reset(keepType: true) }
                         .buttonStyle(.app)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
             HStack(spacing: 6) {
@@ -1137,7 +1457,7 @@ struct ProductEditor: View {
 
     @ViewBuilder
     private var typeSection: some View {
-        formSection("種類", "商品の分類・ID形式・在庫の扱い") {
+        FormSection("種類", "商品の分類・ID形式・在庫の扱い") {
             if let id = editingId {
                 if let t = type {
                     VStack(alignment: .leading, spacing: 4) {
@@ -1201,7 +1521,7 @@ struct ProductEditor: View {
     }
 
     private var basicSection: some View {
-        formSection("基本情報", "レジと公開サイトに表示される内容") {
+        FormSection("基本情報", "レジと公開サイトに表示される内容") {
             LabeledField(label: "商品名", text: $name, required: true,
                          placeholder: "例: ステッカー まる")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 8)],
@@ -1234,12 +1554,17 @@ struct ProductEditor: View {
     }
 
     private var photoSection: some View {
-        formSection("商品写真", "任意。レジの商品タイルに表示") {
+        FormSection("商品写真", "任意。レジの商品タイルに表示") {
             if isImageNameAvailable {
                 ProductPhotoSection(fileName: imageFileName,
                                     pendingData: $pendingImageData,
                                     removeImage: $removeImage,
                                     showsTitle: false)
+                Text("保存ファイル名: \(imageFileName)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             } else {
                 FieldHelp("種類を選ぶと、商品IDに合わせたファイル名で写真を保存できます。")
             }
@@ -1247,7 +1572,7 @@ struct ProductEditor: View {
     }
 
     private var attributeSection: some View {
-        formSection("属性", "種類ごとに設定された項目") {
+        FormSection("属性", "種類ごとに設定された項目") {
             if let t = type {
                 if t.attrLabel1 == nil && t.attrLabel2 == nil && t.attrLabel3 == nil {
                     FieldHelp("この種類には属性がありません。色・模様などを記録する場合は「② 種類」で属性ラベルを追加してください。")
@@ -1273,7 +1598,7 @@ struct ProductEditor: View {
     }
 
     private var stockSection: some View {
-        formSection("在庫・公開", "販売時の在庫の扱いと公開サイトへの送信") {
+        FormSection("在庫・公開", "販売時の在庫の扱いと公開サイトへの送信") {
             if let t = type {
                 if t.stockMode == StockMode.none {
                     Text("在庫管理なし: 在庫は持ちません。")
@@ -1294,69 +1619,7 @@ struct ProductEditor: View {
         }
     }
 
-    private var submitSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(editingId == nil ? "商品ID（自動）" : "商品ID（変更不可）")
-                    .font(.caption).foregroundColor(.secondary)
-                Text(idPreview)
-                    .font(.system(.headline, design: .monospaced))
-                    .foregroundColor(idPreviewColor)
-                Text("写真ファイル名: \(imageFileName)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.yellow.opacity(0.12)))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.35)))
-            if let hint = validationHint {
-                Text(hint)
-                    .font(.caption)
-                    .foregroundColor(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Button(editingId == nil ? "内容を確認して登録" : "内容を確認して更新") {
-                showConfirm = true
-            }
-            .buttonStyle(.appPrimary)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .disabled(!canSubmit)
-            if editingId != nil {
-                Button("編集をやめる") { reset(keepType: true) }
-                    .buttonStyle(.app)
-                    .frame(maxWidth: .infinity)
-            }
-        }
-    }
-
     // MARK: 部品
-
-    private func formSection<Content: View>(_ title: String, _ subtitle: String? = nil,
-                                            @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.accentColor)
-                        .frame(width: 3, height: 16)
-                    Text(title).font(.callout.bold())
-                }
-                if let subtitle = subtitle {
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 11)
-                }
-            }
-            content()
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.18)))
-    }
 
     private func badge(_ text: String, color: Color = .gray) -> some View {
         Text(text)
@@ -1450,6 +1713,7 @@ struct ProductEditor: View {
         a3 = p.attr3 ?? ""
         stockText = p.stock.map { "\($0)" } ?? "0"
         isPublic = p.isPublic
+        pane = .form
     }
 
     private func commit(continuous: Bool) {
@@ -1489,6 +1753,7 @@ struct ProductEditor: View {
         }
         showConfirm = false
         reset(keepType: continuous)
+        if compact && !continuous { pane = .list }
     }
 
     private func reset(keepType: Bool) {

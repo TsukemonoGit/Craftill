@@ -297,6 +297,227 @@ struct AdaptiveColumns<First: View, Second: View>: View {
     }
 }
 
+// MARK: - マスタ編集（一覧＋フォーム）
+
+/// マスタ編集画面で表示するペイン。狭い画面では一覧とフォームを切り替える。
+enum MasterEditorPane: String, CaseIterable, Identifiable {
+    case list = "一覧"
+    case form = "追加・編集"
+    var id: String { rawValue }
+}
+
+/// 一覧＋追加・編集フォームの共通レイアウト。
+/// 広い画面では左右2ペイン（それぞれ独立スクロール）、狭い画面ではセグメントで切り替える。
+/// 狭い画面で一覧の下にフォームを積むと、追加操作までスクロールが長くなりすぎるため。
+struct MasterEditorLayout<ListContent: View, FormContent: View>: View {
+    @Environment(\.isCompactWidth) private var compact
+    @Binding var pane: MasterEditorPane
+    var formWidth: CGFloat = 480
+    private let listContent: ListContent
+    private let formContent: FormContent
+
+    init(pane: Binding<MasterEditorPane>,
+         formWidth: CGFloat = 480,
+         @ViewBuilder list: () -> ListContent,
+         @ViewBuilder form: () -> FormContent) {
+        _pane = pane
+        self.formWidth = formWidth
+        self.listContent = list()
+        self.formContent = form()
+    }
+
+    var body: some View {
+        if compact {
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("表示", selection: $pane) {
+                    ForEach(MasterEditorPane.allCases) { p in
+                        Text(p.rawValue).tag(p)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                // 一覧とフォームを切り替えたときに、前のペインのスクロール位置を引き継がない。
+                ScrollView {
+                    Group {
+                        if pane == .list {
+                            listContent
+                        } else {
+                            formContent
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 2)
+                }
+                .id(pane)
+                .frame(maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            HStack(alignment: .top, spacing: 16) {
+                listContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                formContent
+                    .frame(width: formWidth)
+                    .frame(maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+/// マスタ一覧用のパネル。見出しと操作バーを固定し、行だけをスクロールさせる。
+/// 狭い画面では外側（AdminShell）のスクロールに任せる。
+struct EditorListPanel<Header: View, Content: View, Footer: View>: View {
+    @Environment(\.isCompactWidth) private var compact
+    let title: String
+    private let header: Header
+    private let content: Content
+    private let footer: Footer
+
+    init(title: String,
+         @ViewBuilder header: () -> Header,
+         @ViewBuilder content: () -> Content,
+         @ViewBuilder footer: () -> Footer) {
+        self.title = title
+        self.header = header()
+        self.content = content()
+        self.footer = footer()
+    }
+
+    var body: some View {
+        Panel(title: title) {
+            VStack(alignment: .leading, spacing: 8) {
+                header
+                if compact {
+                    content
+                } else {
+                    ScrollView { content }
+                        .frame(maxHeight: .infinity)
+                }
+                Divider()
+                footer
+            }
+        }
+        .frame(maxHeight: compact ? nil : .infinity)
+    }
+}
+
+/// 追加・編集フォーム用のパネル。見出しと保存操作を固定し、入力欄だけをスクロールさせる。
+/// 狭い画面では外側のスクロールに任せる。
+struct EditorFormPanel<Header: View, Content: View, Footer: View>: View {
+    @Environment(\.isCompactWidth) private var compact
+    private let header: Header
+    private let content: Content
+    private let footer: Footer
+
+    init(@ViewBuilder header: () -> Header,
+         @ViewBuilder content: () -> Content,
+         @ViewBuilder footer: () -> Footer) {
+        self.header = header()
+        self.content = content()
+        self.footer = footer()
+    }
+
+    var body: some View {
+        Panel {
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                Divider()
+                if compact {
+                    content
+                } else {
+                    ScrollView { content }
+                        .frame(maxHeight: .infinity)
+                }
+                Divider()
+                footer
+            }
+        }
+        .frame(maxHeight: compact ? nil : .infinity)
+    }
+}
+
+/// 一覧が空のときの案内。次の操作が分かるように、必要ならボタンも置ける。
+struct EmptyStateView<Action: View>: View {
+    let icon: String
+    let title: String
+    let message: String
+    private let action: Action
+
+    init(icon: String, title: String, message: String,
+         @ViewBuilder action: () -> Action) {
+        self.icon = icon
+        self.title = title
+        self.message = message
+        self.action = action()
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 26))
+                .foregroundColor(.secondary)
+            Text(title).font(.callout.bold())
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            action
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 22)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.gray.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4]))
+        )
+    }
+}
+
+extension EmptyStateView where Action == EmptyView {
+    init(icon: String, title: String, message: String) {
+        self.init(icon: icon, title: title, message: message) { EmptyView() }
+    }
+}
+
+/// フォーム内の見出し付きセクション。入力項目が多い画面でも目的ごとにまとめる。
+struct FormSection<Content: View>: View {
+    let title: String
+    let subtitle: String?
+    private let content: Content
+
+    init(_ title: String, _ subtitle: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.accentColor)
+                        .frame(width: 3, height: 16)
+                    Text(title).font(.callout.bold())
+                }
+                if let subtitle = subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 11)
+                }
+            }
+            content
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.18)))
+    }
+}
+
 struct PlaceholderImage: View {
     var label = "画像"
 
@@ -397,17 +618,21 @@ struct TableRowView<Actions: View>: View {
     let widths: [CGFloat]
     var header = false
     var actionWidth: CGFloat = 0
+    /// 編集中の行を強調表示する。
+    var highlighted = false
     let actions: Actions
 
     init(cells: [String],
          widths: [CGFloat],
          header: Bool = false,
          actionWidth: CGFloat = 0,
+         highlighted: Bool = false,
          @ViewBuilder actions: () -> Actions) {
         self.cells = cells
         self.widths = widths
         self.header = header
         self.actionWidth = actionWidth
+        self.highlighted = highlighted
         self.actions = actions()
     }
 
@@ -433,7 +658,8 @@ struct TableRowView<Actions: View>: View {
                 }
             }
         }
-        .background(header ? Color.gray.opacity(0.15) : Color.clear)
+        .background(header ? Color.gray.opacity(0.15)
+                    : (highlighted ? Color.accentColor.opacity(0.10) : Color.clear))
     }
 }
 
@@ -441,8 +667,10 @@ extension TableRowView where Actions == EmptyView {
     init(cells: [String],
          widths: [CGFloat],
          header: Bool = false,
-         actionWidth: CGFloat = 0) {
-        self.init(cells: cells, widths: widths, header: header, actionWidth: actionWidth) {
+         actionWidth: CGFloat = 0,
+         highlighted: Bool = false) {
+        self.init(cells: cells, widths: widths, header: header,
+                  actionWidth: actionWidth, highlighted: highlighted) {
             EmptyView()
         }
     }
