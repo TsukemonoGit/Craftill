@@ -16,7 +16,7 @@ struct ImageFolderView: View {
     @State private var busy = false
 
     var body: some View {
-        AdminShell("画像の保存先") {
+        AdminShell("画像の保存先・Web用画像") {
             VStack(alignment: .leading, spacing: 14) {
                 Panel(title: "保存先フォルダ") {
                     if let url = currentURL {
@@ -50,6 +50,19 @@ struct ImageFolderView: View {
                             .disabled(busy)
                         FieldHelp("フォルダを変更しても、既存の写真は自動では移動しません。このボタンで書き出せるのは旧版がアプリ内に残した写真だけです。変更前のフォルダに書き出した写真は、Finder／エクスプローラで手動で移動してください。")
                     }
+                }
+
+                Panel(title: "公開サイト用の画像がない商品ID（\(vm.productsWithoutImage.count)件）") {
+                    if vm.productsWithoutImage.isEmpty {
+                        Text("なし").foregroundColor(.secondary)
+                    } else {
+                        TableRowView(cells: ["product_id", "name"], widths: [100, 240], header: true)
+                        ForEach(vm.productsWithoutImage) { p in
+                            TableRowView(cells: [p.id, p.name], widths: [100, 240])
+                        }
+                    }
+                    Text("保存先フォルダに `<商品ID>.jpg` がない商品IDです。先に写真を保存してください。別名（`image_ref`）で保存されている画像は、元ファイルを残し、保存先フォルダに `<商品ID>.jpg` という名前でコピーしてください。Web用は、ここに載っていない商品の `<商品ID>.jpg` を static/images へコピーしてください。")
+                        .font(.caption).foregroundColor(.secondary)
                 }
 
             }
