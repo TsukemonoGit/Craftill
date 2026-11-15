@@ -146,6 +146,15 @@ struct ProductPhotoSection: View {
             }
             storedPreview = ProductImageStore.cgImage(from: data)
         }
+        .task(id: pendingData) {
+             // ペイン切り替えで本ビューが再生成されると @State が失われるため、
+             // 親が保持する pendingData からプレビューを復元する。
+             if let data = pendingData {
+                 pendingPreview = ProductImageStore.cgImage(from: data)
+             } else {
+                 pendingPreview = nil
+             }
+         }
         .task(id: photoItem) {
             guard let item = photoItem else { return }
             let data = try? await item.loadTransferable(type: Data.self)
