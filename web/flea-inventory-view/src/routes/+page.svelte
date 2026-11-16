@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { dev } from '$app/env';
+	import { page } from '$app/state';
 	import {
 		makeDemoSnapshot,
 		type Snapshot,
@@ -33,6 +34,9 @@
 	const nostrProfileUrl =
 		'https://njump.me/npub1sjcvg64knxkrt6ev52rywzu9uzqakgy8ehhk8yezxmpewsthst6sw3jqcw';
 	//const hashtagUrl = 'https://x.com/hashtag/nostrasia2026';
+
+	const canonicalUrl = $derived(new URL('/', page.url.origin).href);
+	const ogImageUrl = $derived(new URL('/images/MNST-01.jpg', page.url.origin).href);
 
 	let snapshot = $state<Snapshot | null>(null);
 	let error = $state('');
@@ -209,6 +213,33 @@
 		name="description"
 		content="NOSTRASIA 2026 のフリーマーケットに出店する「ものや」のおしながき。商品と在庫の一覧です。"
 	/>
+	<link rel="canonical" href={canonicalUrl} />
+
+	<meta property="og:type" content="website" />
+	<meta property="og:site_name" content="ものや" />
+	<meta property="og:locale" content="ja_JP" />
+	<meta property="og:title" content="ものや おしながき | NOSTRASIA 2026 Flea Market" />
+	<meta
+		property="og:description"
+		content="NOSTRASIA 2026 のフリーマーケットに出店する「ものや」のおしながき。商品と在庫の一覧です。"
+	/>
+	<meta property="og:url" content={canonicalUrl} />
+	<meta property="og:image" content={ogImageUrl} />
+	<meta property="og:image:width" content="1543" />
+	<meta property="og:image:height" content="1028" />
+	<meta
+		property="og:image:alt"
+		content="「ものがのっています」と書かれた NOSTRASIA 2026 のステッカー"
+	/>
+
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:title" content="ものや おしながき | NOSTRASIA 2026 Flea Market" />
+	<meta
+		name="twitter:description"
+		content="NOSTRASIA 2026 のフリーマーケットに出店する「ものや」のおしながき。商品と在庫の一覧です。"
+	/>
+	<meta name="twitter:image" content={ogImageUrl} />
+	<meta name="twitter:image:alt" content="ものや おしながき | NOSTRASIA 2026 Flea Market" />
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
 	<link
