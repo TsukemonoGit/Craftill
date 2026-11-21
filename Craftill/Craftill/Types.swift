@@ -205,12 +205,13 @@ struct Sale: Codable, Equatable, Identifiable {
     var confirmedAt: Date?     // sats入金の確認時刻
     var refunded: Bool         // 返金済みフラグ（sats分）
     var completedAt: Date?     // 完了日時。sats確認済みで中断した会計は nil（A-4）
+    var note: String? = nil    // 会計メモ（任意）。空なら nil
     /// **A-13 の列名**に合わせる。Swift では `id` だけど列は `sale_id`。
     /// `keyEncodingStrategy = .convertToSnakeCase` だけだと `id` になってしまいます。
     enum CodingKeys: String, CodingKey {
         case id = "sale_id"
         case status, method, totalJpy, totalSats, receivedJpy, changeJpy
-        case confirmedAt, refunded, completedAt
+        case confirmedAt, refunded, completedAt, note
     }
 }
 

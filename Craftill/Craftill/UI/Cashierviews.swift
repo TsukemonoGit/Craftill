@@ -296,7 +296,7 @@ struct AdhocSheet: View {
     @State private var confirming = false
 
     private var priceJpy: Int? {
-        guard let v = Int(priceText), v >= 1 else { return nil }
+        guard let v = Int(priceText), v >= 0 else { return nil }
         return v
     }
 
@@ -323,7 +323,7 @@ struct AdhocSheet: View {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("野良商品を追加").font(.headline)
-                    LabeledField(label: "円価格（1以上の整数）", text: $priceText, required: true, placeholder: "例: 1500")
+                    LabeledField(label: "円価格（0以上の整数）", text: $priceText, required: true, placeholder: "例: 1500／0")
                     LabeledField(label: "sats価格（未入力 = sats払いでも現金で受け取り）", text: $satsText)
                     LabeledField(label: "品名（未入力時「野良」）", text: $name)
                     VStack(alignment: .leading, spacing: 2) {
@@ -471,8 +471,24 @@ struct PaymentSelectView: View {
             }
             Spacer(minLength: 8)
             totalsPanel
+            notePanel
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 会計ごとの任意メモ。販売履歴・CSV にも残る。
+    private var notePanel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("会計メモ（任意）")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            TextField("例: 取り置き・袋入れ・値引き理由", text: $vm.checkoutNote)
+                .textFieldStyle(.roundedBorder)
+            Text("\(vm.checkoutNote.count) / 500")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
     }
 
     /// 「現金いくら／satsいくら」を並べて、選ぶ前に金額が分かるようにする。
@@ -910,6 +926,17 @@ struct DoneView: View {
             if let received = d.received {
                 Divider()
                 detailRow("受取額", Fmt.yen(received))
+            }
+            if let note = d.note, !note.isEmpty {
+                Divider()
+                HStack(alignment: .top, spacing: 12) {
+                    Text("メモ").foregroundColor(.secondary)
+                    Spacer(minLength: 12)
+                    Text(note)
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
+                }
+                .padding(.vertical, 8)
             }
         }
         .padding(.horizontal, 14)
