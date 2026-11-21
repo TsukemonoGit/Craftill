@@ -766,6 +766,9 @@ final class AppViewModel: ObservableObject {
         switch m {
         case .allowed:
             apply(m, to: &context)
+            // カートが空になって待機中へ戻ったら、会計メモも破棄する。
+            // 最後の1点を取り消したときに前回のメモが次の会計へ残らないようにする。
+            if context.state == .idle { context.note = nil }
         case .rejected(let reason):
             message = reason
         case .needsConfirm, .needsPIN:
