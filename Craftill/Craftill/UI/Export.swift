@@ -80,11 +80,11 @@ enum CSVExport {
     static func salesCSV(_ sales: [Sale]) -> String {
         table([[
             "sale_id", "status", "method", "total_jpy", "total_sats",
-            "received_jpy", "change_jpy", "confirmed_at", "refunded", "completed_at"
+            "received_jpy", "change_jpy", "confirmed_at", "refunded", "completed_at", "note"
         ]] + sales.map {
             [$0.id, $0.status.rawValue, $0.method.rawValue, int($0.totalJpy), int($0.totalSats),
              int($0.receivedJpy), int($0.changeJpy), date($0.confirmedAt),
-             $0.refunded ? "1" : "0", date($0.completedAt)]
+             $0.refunded ? "1" : "0", date($0.completedAt), $0.note ?? ""]
         })
     }
 

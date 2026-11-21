@@ -98,6 +98,7 @@ func buildSale(cart: [CartLine],
                chooseSats: Bool,
                receivedJpy: Int?,     // 現金を受け取ったときだけ
                confirmedAt: Date?,    // sats確認済みなら
+               note: String?,         // 会計メモ（任意）
                now: Date) -> (sale: Sale, items: [SaleItem]) {
 
     let saleId = ids.nextSaleID(at: now)          // ← 採番は完了時（A-19-4）
@@ -107,7 +108,8 @@ func buildSale(cart: [CartLine],
     var sale = Sale(id: saleId, status: .completed, method: method,
                     totalJpy: nil, totalSats: nil,
                     receivedJpy: nil, changeJpy: nil,
-                    confirmedAt: nil, refunded: false, completedAt: now)
+                    confirmedAt: nil, refunded: false, completedAt: now,
+                    note: note)
 
     var items: [SaleItem] = []
     for (n, line) in cart.enumerated() {
@@ -251,6 +253,7 @@ func commitSale(cart: [CartLine],
                 chooseSats: Bool,
                 receivedJpy: Int?,
                 confirmedAt: Date?,
+                note: String?,
                 now: Date) -> CommitResult {
 
     // ① 在庫検証。1件でも失敗したら、以降の手順を全部飛ばす
@@ -259,7 +262,8 @@ func commitSale(cart: [CartLine],
 
     // ② 販売記録。**検証が通ってから採番する**（失敗した会計で番号を消費しない・A-19-4）
     let built = buildSale(cart: cart, ids: &ids, chooseSats: chooseSats,
-                          receivedJpy: receivedJpy, confirmedAt: confirmedAt, now: now)
+                          receivedJpy: receivedJpy, confirmedAt: confirmedAt,
+                          note: note, now: now)
 
     // ③ 在庫減算 ＋ ④ 在庫変動ログ
     switch completeSale(saleId: built.sale.id, cart: cart, inventory: &inventory,
@@ -292,6 +296,7 @@ func suspendSale(cart: [CartLine],
                  items: inout [SaleItem],
                  chooseSats: Bool,
                  confirmedAt: Date?,
+                 note: String?,
                  now: Date) -> SuspendResult {
 
     guard confirmedAt != nil else {
@@ -303,7 +308,8 @@ func suspendSale(cart: [CartLine],
 
     // sats確認済み：記録を残す。ただし「完了していない」ので completedAt は nil のまま
     let built = buildSale(cart: cart, ids: &ids, chooseSats: chooseSats,
-                          receivedJpy: nil, confirmedAt: confirmedAt, now: now)
+                          receivedJpy: nil, confirmedAt: confirmedAt,
+                          note: note, now: now)
     var suspended = built.sale
     suspended.status = .voided        // voided だが…
     suspended.completedAt = nil       // ★ …completedAt は nil。**これがないと販売取消と区別できない**（A-19-3）

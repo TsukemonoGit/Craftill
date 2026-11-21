@@ -39,6 +39,8 @@ struct SaleContext: Codable, Equatable {
     var satsConfirmedAt: Date?
     /// 済ボタンで承認した請求sats額。承認後に復元しても変化しない（C-6 #78）
     var confirmedSats: Int?
+    /// 会計メモ（任意）。空なら nil。会計の保存・復元にも含める。
+    var note: String? = nil
 }
 
 

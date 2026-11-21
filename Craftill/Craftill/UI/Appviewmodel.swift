@@ -58,6 +58,7 @@ struct DoneInfo {
     let cashPart: Int?
     let received: Int?
     let change: Int?
+    let note: String?
 }
 
 /// 会計状態の自動保存（UserDefaults に JSON。A-3 / docs/開発/1_決定事項）。
@@ -383,6 +384,18 @@ final class AppViewModel: ObservableObject {
     var change: Int { max(0, cashReceived - cashDue) }
     /// 請求額に足りない分（画面表示用）。足りているときは 0。
     var cashShortfall: Int { max(0, cashDue - cashReceived) }
+
+    /// 会計メモ。支払方法選択の画面から入力する。会計状態と一緒に自動保存される。
+    var checkoutNote: String {
+        get { context.note ?? "" }
+        set { context.note = newValue.isEmpty ? nil : String(newValue.prefix(500)) }
+    }
+
+    /// DB に保存するメモ。前後の空白だけの入力は nil にする。
+    private var trimmedCheckoutNote: String? {
+        let text = (context.note ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
 
     func groupLabel(_ id: String?) -> String {
         guard let id else { return "グループなし" }
@@ -1102,6 +1115,7 @@ final class AppViewModel: ObservableObject {
                                     chooseSats: false,
                                     receivedJpy: product.priceJpy,
                                     confirmedAt: nil,
+                                    note: nil,
                                     now: Date())
             switch result {
             case .failure(let problems):
@@ -1163,6 +1177,7 @@ final class AppViewModel: ObservableObject {
                                 chooseSats: chooseSats,
                                 receivedJpy: received,
                                 confirmedAt: confirmed,
+                                note: trimmedCheckoutNote,
                                 now: Date())
 
         switch result {
@@ -1185,7 +1200,8 @@ final class AppViewModel: ObservableObject {
             apply(finalMove, to: &context)
             done = DoneInfo(saleId: sale.id, method: sale.method,
                             totalSats: sale.totalSats, cashPart: sale.totalJpy,
-                            received: sale.receivedJpy, change: sale.changeJpy)
+                            received: sale.receivedJpy, change: sale.changeJpy,
+                            note: sale.note)
             clearActiveSale()
             requestAutoSend()
         }
@@ -1208,6 +1224,7 @@ final class AppViewModel: ObservableObject {
                                  items: &allItems,
                                  chooseSats: true,
                                  confirmedAt: context.satsConfirmedAt,
+                                 note: trimmedCheckoutNote,
                                  now: Date())
         switch result {
         case .failure(let m):

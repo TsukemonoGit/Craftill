@@ -2571,15 +2571,23 @@ struct SalesHistoryView: View {
                      s.totalSats.map { Fmt.num($0) } ?? "―",
                      s.completedAt == nil ? "確認 " + Fmt.time(s.confirmedAt) + "（中断）" : Fmt.time(s.completedAt),
                      s.refunded ? "済" : "―"]
-        if compact {
-            VStack(alignment: .leading, spacing: 6) {
-                TableRowView(cells: cells, widths: [170, 90, 100, 80, 90, 170, 80])
-                actionButtons(s)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+        VStack(alignment: .leading, spacing: 4) {
+            if compact {
+                VStack(alignment: .leading, spacing: 6) {
+                    TableRowView(cells: cells, widths: [170, 90, 100, 80, 90, 170, 80])
+                    actionButtons(s)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            } else {
+                TableRowView(cells: cells, widths: [170, 90, 100, 80, 90, 170, 80], actionWidth: 300) {
+                    actionButtons(s)
+                }
             }
-        } else {
-            TableRowView(cells: cells, widths: [170, 90, 100, 80, 90, 170, 80], actionWidth: 300) {
-                actionButtons(s)
+            if let note = s.note, !note.isEmpty {
+                Text("メモ: \(note)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
             }
         }
     }

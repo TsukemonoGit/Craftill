@@ -216,7 +216,8 @@ final class Database {
             change_jpy   INTEGER,
             confirmed_at TEXT,
             refunded     INTEGER NOT NULL DEFAULT 0,
-            completed_at TEXT
+            completed_at TEXT,
+            note         TEXT
         );
 
         CREATE TABLE IF NOT EXISTS sale_items (
@@ -261,6 +262,19 @@ final class Database {
             try addForeignKeysIfNeeded()
             try exec("PRAGMA user_version = 1;")
         }
+        if version < 2 {
+            try addColumnIfNeeded(table: "sales", column: "note", definition: "TEXT")
+            try exec("PRAGMA user_version = 2;")
+        }
+    }
+
+    /// 既存テーブルに列が無いときだけ追加する（版付きマイグレーション用）。
+    private func addColumnIfNeeded(table: String, column: String, definition: String) throws {
+        let exists = try query("PRAGMA table_info(\(table));") { s in
+            text(s, 1) == column
+        }.contains(true)
+        guard !exists else { return }
+        try exec("ALTER TABLE \(table) ADD COLUMN \(column) \(definition);")
     }
 
     /// `sale_items` / `stock_movements` に FK が無い既存 DB を、FK 付きの定義へ組み直す。
@@ -446,7 +460,7 @@ final class Database {
     func loadSales() throws -> [Sale] {
         try query("""
         SELECT sale_id, status, method, total_jpy, total_sats,
-               received_jpy, change_jpy, confirmed_at, refunded, completed_at
+               received_jpy, change_jpy, confirmed_at, refunded, completed_at, note
         FROM sales ORDER BY sale_id;
         """) { s in
             Sale(id: text(s, 0) ?? "",
@@ -458,7 +472,8 @@ final class Database {
                  changeJpy: int(s, 6),
                  confirmedAt: date(s, 7),
                  refunded: (int(s, 8) ?? 0) != 0,
-                 completedAt: date(s, 9))
+                 completedAt: date(s, 9),
+                 note: text(s, 10))
         }
     }
 
@@ -598,8 +613,8 @@ final class Database {
         try run("""
         INSERT INTO sales
         (sale_id, status, method, total_jpy, total_sats,
-         received_jpy, change_jpy, confirmed_at, refunded, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         received_jpy, change_jpy, confirmed_at, refunded, completed_at, note)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(sale_id) DO UPDATE SET
             status = excluded.status,
             method = excluded.method,
@@ -609,7 +624,8 @@ final class Database {
             change_jpy = excluded.change_jpy,
             confirmed_at = excluded.confirmed_at,
             refunded = excluded.refunded,
-            completed_at = excluded.completed_at;
+            completed_at = excluded.completed_at,
+            note = excluded.note;
         """) { s in
             bind(s, 1, sale.id)
             bind(s, 2, sale.status.rawValue)
@@ -621,6 +637,7 @@ final class Database {
             bind(s, 8, dateText(sale.confirmedAt))
             bind(s, 9, sale.refunded ? 1 : 0)
             bind(s, 10, dateText(sale.completedAt))
+            bind(s, 11, sale.note)
         }
     }
 
