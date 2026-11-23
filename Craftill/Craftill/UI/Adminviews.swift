@@ -355,6 +355,8 @@ struct EditView: View {
     @State private var tab: Tab = .product
     /// 構成の説明は常時表示せず、必要なときだけ開く（一覧・フォームの表示領域を確保する）。
     @State private var showStructureHelp = false
+    /// sats一括設定シート。一覧の末尾ではなく固定ヘッダーから開く。
+    @State private var showSatsBulk = false
 
     var body: some View {
         // ヘッダーを固定し、その下の一覧/フォームだけをスクロールさせる。
@@ -381,7 +383,8 @@ struct EditView: View {
         switch tab {
         case .group: GroupEditor()
         case .type: TypeEditor()
-        case .product: ProductEditor(onOpenTypes: { tab = .type })
+        case .product: ProductEditor(showSatsBulk: $showSatsBulk,
+                                     onOpenTypes: { tab = .type })
         }
     }
 
@@ -391,11 +394,15 @@ struct EditView: View {
                 HStack(spacing: 8) {
                     stepSummary
                     Spacer(minLength: 8)
+                    headerActions
                     helpToggle
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     stepSummary
-                    helpToggle
+                    HStack(spacing: 8) {
+                        headerActions
+                        helpToggle
+                    }
                 }
             }
             if showStructureHelp { structurePanel }
@@ -406,6 +413,53 @@ struct EditView: View {
             .pickerStyle(.segmented)
             .frame(maxWidth: 420)
         }
+    }
+
+    /// ヘッダーの操作。商品タブではsats一括設定、全タブでCSV入出力を出す。
+    @ViewBuilder
+    private var headerActions: some View {
+        if tab == .product {
+            Button { showSatsBulk = true } label: {
+                HStack(spacing: 6) {
+                    Label(compact ? "sats一括設定" : "sats価格を一括設定",
+                          systemImage: "bitcoinsign.circle")
+                    if missingSatsCount > 0 {
+                        Text("未設定 \(missingSatsCount)")
+                            .font(.caption2.bold())
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.orange.opacity(0.18)))
+                    }
+                }
+            }
+            .buttonStyle(.appPrimary)
+            .fixedSize(horizontal: true, vertical: false)
+            .disabled(vm.inventory.isEmpty)
+            .help("同じ円価格の商品に、まとめてsats価格を設定します。空欄の行は変更しません。")
+        }
+        csvMenu
+    }
+
+    /// マスタ全体のCSV入出力。商品一覧のfooterではなく、常に見えるヘッダーに置く。
+    private var csvMenu: some View {
+        Menu {
+            Button("CSVを取り込む…") { vm.go(.csvImport) }
+            Button("マスタCSVを書き出す…") { vm.exportMaster() }
+            Divider()
+            Button("価格一覧CSVを書き出す…") {
+                vm.exportPriceList()
+            }
+        } label: {
+            Label(compact ? "CSV" : "CSV入出力", systemImage: "tablecells")
+                .font(.system(size: 14))
+        }
+        .actionMenuStyle()
+        .help("CSVの取り込み・書き出し")
+    }
+
+    private var missingSatsCount: Int {
+        vm.inventory.filter { $0.priceSats == nil }.count
     }
 
     // MARK: 説明
@@ -1019,10 +1073,14 @@ struct ProductEditor: View {
     @State private var removeImage = false
     @State private var searchText = ""
     @State private var filterTypeId = ""
-    @State private var showSatsBulk = false
+    @Binding private var showSatsBulk: Bool
+    /// sats価格が未設定の商品だけに絞り込む。
+    @State private var onlyMissingSats = false
     @State private var pane: MasterEditorPane = .list
 
-    init(onOpenTypes: (() -> Void)? = nil) {
+    init(showSatsBulk: Binding<Bool>,
+         onOpenTypes: (() -> Void)? = nil) {
+        _showSatsBulk = showSatsBulk
         self.onOpenTypes = onOpenTypes
     }
 
@@ -1137,6 +1195,7 @@ struct ProductEditor: View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         return vm.inventory.filter { p in
             (filterTypeId.isEmpty || p.typeId == filterTypeId)
+                && (!onlyMissingSats || p.priceSats == nil)
                 && (query.isEmpty
                     || p.name.localizedCaseInsensitiveContains(query)
                     || p.id.localizedCaseInsensitiveContains(query))
@@ -1189,7 +1248,7 @@ struct ProductEditor: View {
             }
         }
         .sheet(isPresented: $showSatsBulk) {
-            SatsBulkPriceSheet(initialTypeId: typeId) { changed in
+            SatsBulkPriceSheet(initialTypeId: filterTypeId) { changed in
                 // 編集中の商品が一括設定の対象なら、フォームのsats欄も新しい値にする。
                 // 古い値のまま「更新」を押して、一括設定を上書きしないため。
                 guard let id = editingId,
@@ -1218,6 +1277,18 @@ struct ProductEditor: View {
         .frame(maxWidth: compact ? .infinity : 220)
     }
 
+    /// sats価格が未設定の商品だけに絞り込む。一括設定の対象を見つけやすくする。
+    private var satsMissingFilter: some View {
+        Toggle(isOn: $onlyMissingSats) {
+            Text("sats未設定のみ")
+                .font(.caption)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .fixedSize(horizontal: true, vertical: false)
+        .help("sats価格が空欄の商品だけを表示します")
+    }
+
     private var listTitle: String {
         let total = vm.inventory.count
         if filteredInventory.count == total { return "商品一覧（\(total)件）" }
@@ -1240,11 +1311,13 @@ struct ProductEditor: View {
                 VStack(alignment: .leading, spacing: 8) {
                     searchField
                     typeFilter
+                    satsMissingFilter
                 }
             } else {
                 HStack(spacing: 8) {
                     searchField
                     typeFilter
+                    satsMissingFilter
                 }
             }
             if !filteredInventory.isEmpty {
@@ -1255,8 +1328,6 @@ struct ProductEditor: View {
             }
         } content: {
             listRows
-        } footer: {
-            listActionBar
         }
     }
 
@@ -1274,7 +1345,9 @@ struct ProductEditor: View {
                 } else {
                     EmptyStateView(icon: "magnifyingglass",
                                    title: "条件に合う商品がありません",
-                                   message: "検索語や種類を変えてください。")
+                                   message: onlyMissingSats
+                                       ? "条件に合う未設定の商品がありません。「sats未設定のみ」や検索語を変えてください。"
+                                       : "検索語や種類を変えてください。")
                 }
             } else {
                 ForEach(filteredInventory) { p in
@@ -1286,46 +1359,6 @@ struct ProductEditor: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// 一覧の下に固定する操作バー。sats一括設定を主操作として目立たせる。
-    private var listActionBar: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                satsBulkButton
-                csvMenu
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                satsBulkButton
-                csvMenu
-            }
-        }
-        .padding(.top, 2)
-    }
-
-    private var satsBulkButton: some View {
-        Button { showSatsBulk = true } label: {
-            Label("sats価格を一括設定", systemImage: "bitcoinsign.circle")
-        }
-        .buttonStyle(.appPrimary)
-        .disabled(vm.inventory.isEmpty)
-        .help("同じ円価格の商品に、まとめてsats価格を設定します。空欄の行は変更しません。")
-    }
-
-    private var csvMenu: some View {
-        Menu {
-            Button("CSVを取り込む…") { vm.go(.csvImport) }
-            Button("マスタCSVを書き出す…") { vm.exportMaster() }
-            Divider()
-            Button("価格一覧CSVを書き出す…") {
-                vm.exportPriceList()
-            }
-        } label: {
-            Label("CSV入出力", systemImage: "tablecells")
-                .font(.system(size: 14))
-        }
-        .actionMenuStyle()
-        .help("CSVの取り込み・書き出し")
     }
 
     @ViewBuilder
@@ -1788,6 +1821,11 @@ struct SatsBulkPriceSheet: View {
     @State private var typeId: String
     @State private var satsTexts: [Int: String] = [:]
     @State private var error: String? = nil
+    /// 適用後に残りの未設定を確認できるよう、シートは閉じずに結果を表示する。
+    @State private var appliedMessage: String? = nil
+    /// 未設定の商品がある円価格だけを表示する（初期状態）。
+    /// 表示の絞り込みだけで、適用範囲は従来どおり「同じ円価格の商品すべて」。
+    @State private var onlyMissingSats = true
 
     init(initialTypeId: String, onApplied: @escaping ([Product]) -> Void) {
         self.initialTypeId = initialTypeId
@@ -1799,8 +1837,26 @@ struct SatsBulkPriceSheet: View {
         vm.inventory.filter { typeId.isEmpty || $0.typeId == typeId }
     }
 
-    private var priceTiers: [Int] {
+    private var allPriceTiers: [Int] {
         Array(Set(scopedProducts.map(\.priceJpy))).sorted()
+    }
+
+    private var missingSatsCount: Int {
+        scopedProducts.filter { $0.priceSats == nil }.count
+    }
+
+    /// 表示する円価格。`onlyMissingSats` のときは、未設定の商品がある価格だけ。
+    /// 適用時は同じ円価格の商品すべてが対象なので、件数とプレビューは全商品で出す。
+    private var priceTiers: [Int] {
+        guard onlyMissingSats else { return allPriceTiers }
+        let missingPrices = Set(scopedProducts.filter { $0.priceSats == nil }.map(\.priceJpy))
+        return allPriceTiers.filter { missingPrices.contains($0) }
+    }
+
+    private var emptyScopeMessage: String {
+        if scopedProducts.isEmpty { return "対象の商品がありません。" }
+        if onlyMissingSats { return "対象の商品は、すべてsats価格が設定済みです。" }
+        return "対象の商品がありません。"
     }
 
     private var assignments: [Int: Int] {
@@ -1839,7 +1895,7 @@ struct SatsBulkPriceSheet: View {
                 VStack(alignment: .leading, spacing: 12) {
                     scopePicker
                     if priceTiers.isEmpty {
-                        Text("対象の商品がありません。")
+                        Text(emptyScopeMessage)
                             .font(.callout)
                             .foregroundColor(.secondary)
                     } else {
@@ -1870,6 +1926,7 @@ struct SatsBulkPriceSheet: View {
             // 種類を変えたら、前の種類で入力した値を残さない（同じ円価格の別種類へ誤適用しない）。
             satsTexts = [:]
             error = nil
+            appliedMessage = nil
         }
     }
 
@@ -1897,6 +1954,13 @@ struct SatsBulkPriceSheet: View {
             }
             .labelsHidden()
             .frame(maxWidth: compact ? .infinity : 320)
+            Toggle(isOn: $onlyMissingSats) {
+                Text("sats未設定がある円価格のみ表示（未設定 \(missingSatsCount)件）")
+                    .font(.caption)
+            }
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .padding(.top, 2)
         }
     }
 
@@ -1988,17 +2052,26 @@ struct SatsBulkPriceSheet: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
-            Button("キャンセル") { dismiss() }.buttonStyle(.app)
-            Spacer(minLength: 8)
-            if vm.saleState != .idle {
-                Text("会計中は変更できません")
+        VStack(alignment: .leading, spacing: 6) {
+            if let appliedMessage {
+                Text(appliedMessage)
                     .font(.caption)
-                    .foregroundColor(.orange)
+                    .foregroundColor(.green)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Button(changes.isEmpty ? "更新" : "\(changes.count)件を更新") { apply() }
-                .buttonStyle(.appPrimary)
-                .disabled(!canApply)
+            HStack(spacing: 10) {
+                Button(appliedMessage == nil ? "キャンセル" : "閉じる") { dismiss() }
+                    .buttonStyle(.app)
+                Spacer(minLength: 8)
+                if vm.saleState != .idle {
+                    Text("会計中は変更できません")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+                Button(changes.isEmpty ? "更新" : "\(changes.count)件を更新") { apply() }
+                    .buttonStyle(.appPrimary)
+                    .disabled(!canApply)
+            }
         }
     }
 
@@ -2020,7 +2093,7 @@ struct SatsBulkPriceSheet: View {
     private func binding(for price: Int) -> Binding<String> {
         Binding(
             get: { satsTexts[price] ?? "" },
-            set: { satsTexts[price] = $0 }
+            set: { satsTexts[price] = $0; appliedMessage = nil }
         )
     }
 
@@ -2042,7 +2115,9 @@ struct SatsBulkPriceSheet: View {
         }
         let ids = Set(planned.map(\.product.id))
         onApplied(vm.inventory.filter { ids.contains($0.id) })
-        dismiss()
+        // 閉じずに残す。未設定の絞り込みがオンのままなら、残りの対象だけが表示される。
+        satsTexts = [:]
+        appliedMessage = "\(planned.count)件のsats価格を更新しました。"
     }
 }
 

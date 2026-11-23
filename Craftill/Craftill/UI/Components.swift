@@ -374,6 +374,7 @@ struct EditorListPanel<Header: View, Content: View, Footer: View>: View {
     private let header: Header
     private let content: Content
     private let footer: Footer
+    private var showsFooter = true
 
     init(title: String,
          @ViewBuilder header: () -> Header,
@@ -395,11 +396,23 @@ struct EditorListPanel<Header: View, Content: View, Footer: View>: View {
                     ScrollView { content }
                         .frame(maxHeight: .infinity)
                 }
-                Divider()
-                footer
+                if showsFooter {
+                    Divider()
+                    footer
+                }
             }
         }
         .frame(maxHeight: compact ? nil : .infinity)
+    }
+}
+
+extension EditorListPanel where Footer == EmptyView {
+    /// footer を持たない一覧。空の区切り線も出さない。
+    init(title: String,
+         @ViewBuilder header: () -> Header,
+         @ViewBuilder content: () -> Content) {
+        self.init(title: title, header: header, content: content, footer: { EmptyView() })
+        self.showsFooter = false
     }
 }
 
