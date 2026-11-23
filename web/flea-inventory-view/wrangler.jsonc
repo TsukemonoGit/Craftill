@@ -17,7 +17,7 @@
 		}
 	],
 	"workers_dev": true,
-	"preview_urls": false,
+	"preview_urls": true,
 	"previews": {
 		// ...
 		"kv_namespaces": [
