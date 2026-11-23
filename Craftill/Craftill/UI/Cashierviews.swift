@@ -391,9 +391,62 @@ struct AdhocSheet: View {
 
 // MARK: - 支払方法選択
 
+/// 支払方法の選択カード。ホバー・押下範囲・無効時の見た目を1か所にまとめる。
+private struct PaymentMethodCard<Content: View>: View {
+    let tint: Color
+    let enabled: Bool
+    let accessibilityLabel: String
+    let accessibilityHint: String
+    let action: () -> Void
+    private let content: Content
+    @State private var hovering = false
+
+    init(tint: Color,
+         enabled: Bool = true,
+         accessibilityLabel: String,
+         accessibilityHint: String,
+         action: @escaping () -> Void,
+         @ViewBuilder content: () -> Content) {
+        self.tint = tint
+        self.enabled = enabled
+        self.accessibilityLabel = accessibilityLabel
+        self.accessibilityHint = accessibilityHint
+        self.action = action
+        self.content = content()
+    }
+
+    var body: some View {
+        Button(action: action) {
+            content
+                .opacity(enabled ? 1 : 0.7)
+                .padding(16)
+                .frame(maxWidth: .infinity, minHeight: 116, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(tint.opacity(enabled ? (hovering ? 0.17 : 0.09) : 0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(enabled ? tint.opacity(hovering ? 0.85 : 0.45)
+                                        : Color.gray.opacity(0.45),
+                                style: StrokeStyle(lineWidth: enabled && hovering ? 2 : 1.5,
+                                                   dash: enabled ? [] : [5, 4]))
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .onHover { hovering = $0 }
+        .help(accessibilityHint)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint)
+    }
+}
+
 struct PaymentSelectView: View {
     @EnvironmentObject var vm: AppViewModel
     @Environment(\.isCompactWidth) private var compact
+    @State private var cartExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -402,92 +455,316 @@ struct PaymentSelectView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
             if compact {
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 16) {
-                        cartSummary
-                        paymentOptions.frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(14)
-                }
+                compactContent
             } else {
-                AdaptiveHStack(breakpoint: 900, spacing: 20) {
-                    cartSummary
-                } second: {
-                    paymentOptions
-                }
-                .padding(20)
+                wideContent
             }
+            footerActions
             MessageBar()
         }
     }
 
-    private var paymentOptions: some View {
-        VStack(spacing: 14) {
-            Text("支払方法を選択").font(.headline).frame(maxWidth: .infinity, alignment: .leading)
-            Button { vm.chooseCash() } label: {
-                VStack(spacing: 6) {
-                    Text("現金").font(.system(size: 24, weight: .bold))
-                    Text(Fmt.yen(vm.totals.cash)).font(.system(size: 22))
-                }
-                .frame(maxWidth: .infinity, minHeight: 130)
+    // MARK: レイアウト
+
+    /// 狭い画面では、まず支払方法を選べるようにして、カート明細は折りたたむ。
+    private var compactContent: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 14) {
+                selectionHeader
+                cashCard
+                satsCard
+                if vm.canPayBySats { paymentHint }
+                cartDisclosure
             }
-            .buttonStyle(.app)
-            Button { vm.chooseSats() } label: {
-                VStack(spacing: 6) {
-                    Text("sats払い").font(.system(size: 24, weight: .bold))
-                    if vm.canPayBySats {
-                        Text(satsPayText).font(.system(size: 18))
-                        if vm.totals.cashForSats > 0 {
-                            Text("（\(Fmt.yen(vm.totals.cashForSats))分は現金で受け取り）").font(.caption)
-                        }
-                    } else {
-                        Text("選択できません").font(.system(size: 18))
+            .padding(14)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var wideContent: some View {
+        HStack(alignment: .top, spacing: 20) {
+            cartPanel
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    selectionHeader
+                    cashCard
+                    satsCard
+                    if vm.canPayBySats { paymentHint }
+                }
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 4)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var selectionHeader: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("お支払い方法").font(.system(size: 20, weight: .bold))
+            Text("方法を選ぶと次の画面に進みます。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var paymentHint: some View {
+        Label("sats払いはWoSで請求し、入金を確認してから「済」を押します。",
+              systemImage: "info.circle")
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: 支払方法カード
+
+    private var cashCard: some View {
+        PaymentMethodCard(
+            tint: .green,
+            accessibilityLabel: "現金で支払う。請求額 \(Fmt.yen(vm.totals.cash))",
+            accessibilityHint: "お預かり金額の入力画面に進みます",
+            action: { vm.chooseCash() }
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    methodIcon("yensign.circle.fill", tint: .green)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("現金").font(.system(size: 22, weight: .bold))
+                        Text("お預かり金額を入力して、お釣りを計算します")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.secondary)
                 }
-                .frame(maxWidth: .infinity, minHeight: 130)
-            }
-            .buttonStyle(.app)
-            .disabled(!vm.canPayBySats)
-            if let reason = vm.satsDisabledReason {
-                Text("sats払いを選べません: \(reason)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            Spacer()
-            HStack(spacing: 10) {
-                Button("戻る") { vm.backToScan() }.buttonStyle(.app)
-                Button("会計中断") { vm.requestSuspend() }.buttonStyle(.app)
+                amountLine("請求") {
+                    Text(Fmt.yen(vm.totals.cash))
+                        .font(.system(size: 27, weight: .bold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
             }
         }
     }
 
-    private var cartSummary: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("カート（読み取り専用）").font(.headline)
-            TableRowView(cells: ["商品ID", "商品名", "数量", "小計"], widths: [100, 200, 60, 110], header: true)
-            ForEach(vm.cart) { l in
-                TableRowView(cells: [l.id, l.name, "\(l.qty)", Fmt.yen(l.subtotalJpy)], widths: [100, 200, 60, 110])
+    private var satsCard: some View {
+        PaymentMethodCard(
+            tint: .orange,
+            enabled: vm.canPayBySats,
+            accessibilityLabel: satsAccessibilityLabel,
+            accessibilityHint: vm.canPayBySats
+                ? "WoSでの請求画面に進みます"
+                : (vm.satsDisabledReason ?? "このカートではsats払いを選べません"),
+            action: { vm.chooseSats() }
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    methodIcon("bitcoinsign.circle.fill", tint: .orange)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text("sats払い").font(.system(size: 22, weight: .bold))
+                            if vm.canPayBySats && vm.totals.cashForSats > 0 {
+                                badge("現金併用")
+                            }
+                            if !vm.canPayBySats {
+                                badge("利用不可", gray: true)
+                            }
+                        }
+                        Text(satsSubtitle)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: vm.canPayBySats ? "chevron.right" : "lock.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                if vm.canPayBySats {
+                    amountLine("請求") {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(Fmt.sats(vm.totals.sats))
+                                .font(.system(size: 27, weight: .bold))
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.6)
+                            if vm.totals.cashForSats > 0 {
+                                Text("＋ \(Fmt.yen(vm.totals.cashForSats)) 現金")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                            }
+                        }
+                    }
+                } else if let reason = vm.satsDisabledReason {
+                    Divider().opacity(0.5)
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "info.circle")
+                            .font(.caption)
+                        Text(reason)
+                            .font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundColor(.secondary)
+                }
             }
+        }
+    }
+
+    private var satsSubtitle: String {
+        guard vm.canPayBySats else { return "このカートではsats払いを選べません" }
+        return vm.totals.cashForSats > 0
+            ? "satsで受け取り、現金分はあとで受け取ります"
+            : "WoSで請求して、satsで受け取ります"
+    }
+
+    private var satsAccessibilityLabel: String {
+        guard vm.canPayBySats else {
+            return "sats払い。利用できません。\(vm.satsDisabledReason ?? "")"
+        }
+        if vm.totals.cashForSats > 0 {
+            return "sats払い。\(Fmt.sats(vm.totals.sats))と現金\(Fmt.yen(vm.totals.cashForSats))"
+        }
+        return "sats払い。\(Fmt.sats(vm.totals.sats))"
+    }
+
+    private func methodIcon(_ name: String, tint: Color) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 23, weight: .semibold))
+            .foregroundColor(tint)
+            .frame(width: 46, height: 46)
+            .background(Circle().fill(tint.opacity(0.14)))
+            .overlay(Circle().stroke(tint.opacity(0.35), lineWidth: 1))
+    }
+
+    private func badge(_ text: String, gray: Bool = false) -> some View {
+        let tint: Color = gray ? .gray : .orange
+        return Text(text)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundColor(gray ? .secondary : .primary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(tint.opacity(0.16)))
+            .overlay(Capsule().stroke(tint.opacity(0.4), lineWidth: 0.5))
+    }
+
+    private func amountLine<Value: View>(_ label: String,
+                                         @ViewBuilder value: () -> Value) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
             Spacer(minLength: 8)
+            value()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: カート明細
+
+    private var cartTotalQty: Int { vm.cart.reduce(0) { $0 + $1.qty } }
+
+    private var cartPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("カート").font(.headline)
+                Text("\(cartTotalQty)点")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 8)
+                Text("読み取り専用")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
             totalsPanel
+            ScrollView(showsIndicators: false) {
+                cartTable
+                    .padding(.bottom, 2)
+            }
             notePanel
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3)))
+    }
+
+    /// 狭い画面用。支払方法を選ぶ操作を邪魔しないよう、明細は折りたたむ。
+    private var cartDisclosure: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { cartExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: cartExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.secondary)
+                    Text("カートの内容").font(.headline)
+                    Text("\(cartTotalQty)点")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 8)
+                    if !vm.checkoutNote.isEmpty {
+                        Label("メモあり", systemImage: "note.text")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("カートの内容を\(cartExpanded ? "閉じる" : "開く")")
+            if cartExpanded {
+                Divider()
+                VStack(alignment: .leading, spacing: 10) {
+                    cartTable
+                    totalsPanel
+                    notePanel
+                }
+                .padding(12)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.3)))
+    }
+
+    private var cartTable: some View {
+        VStack(spacing: 0) {
+            TableRowView(cells: ["商品ID", "商品名", "数量", "小計"],
+                         widths: [100, 200, 60, 110], header: true)
+            ForEach(vm.cart) { l in
+                TableRowView(cells: [l.id, l.name, "\(l.qty)", Fmt.yen(l.subtotalJpy)],
+                             widths: [100, 200, 60, 110])
+            }
+        }
     }
 
     /// 会計ごとの任意メモ。販売履歴・CSV にも残る。
     private var notePanel: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("会計メモ（任意）")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            HStack(spacing: 8) {
+                Text("会計メモ（任意）")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer(minLength: 8)
+                Text("\(vm.checkoutNote.count) / 500")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
             TextField("例: 取り置き・袋入れ・値引き理由", text: $vm.checkoutNote)
                 .textFieldStyle(.roundedBorder)
-            Text("\(vm.checkoutNote.count) / 500")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 
@@ -495,8 +772,10 @@ struct PaymentSelectView: View {
     private var totalsPanel: some View {
         Panel(title: "お支払い合計") {
             VStack(alignment: .leading, spacing: 8) {
-                totalRow("現金", Fmt.yen(vm.totals.cash))
-                totalRow("sats払い", satsPayText)
+                totalRow("現金", Fmt.yen(vm.totals.cash),
+                         tint: .green, icon: "yensign.circle")
+                totalRow("sats払い", satsPayText,
+                         tint: .orange, icon: "bitcoinsign.circle")
             }
         }
     }
@@ -507,13 +786,44 @@ struct PaymentSelectView: View {
         return "\(Fmt.sats(vm.totals.sats)) ＋ \(Fmt.yen(vm.totals.cashForSats))"
     }
 
-    private func totalRow(_ label: String, _ value: String) -> some View {
-        HStack(spacing: 12) {
+    private func totalRow(_ label: String, _ value: String,
+                          tint: Color, icon: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundColor(tint)
+                .frame(width: 18)
             Text(label).foregroundColor(.secondary)
             Spacer(minLength: 12)
             Text(value)
                 .font(.system(.body, design: .monospaced))
                 .fontWeight(.semibold)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+    }
+
+    // MARK: 戻る・中断
+
+    private var footerActions: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 10) {
+                if !compact {
+                    Text("方法を選ぶと自動で次へ進みます")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button("戻る（カート）") { vm.backToScan() }
+                    .buttonStyle(.app)
+                    .frame(maxWidth: compact ? .infinity : 170)
+                Button("会計中断") { vm.requestSuspend() }
+                    .buttonStyle(.app)
+                    .frame(maxWidth: compact ? .infinity : 140)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color.gray.opacity(0.08))
         }
     }
 }

@@ -11,8 +11,21 @@
 		"directory": ".svelte-kit/cloudflare"
 	},
 	"kv_namespaces": [
-		{ "binding": "INVENTORY_KV", "id": "18269a86917943f3a1b26380443f7152" }
+		{
+			"binding": "INVENTORY_KV",
+			"id": "18269a86917943f3a1b26380443f7152"
+		}
 	],
 	"workers_dev": true,
-	"preview_urls": false
+	"preview_urls": true,
+	"previews": {
+		// ...
+		"kv_namespaces": [
+			{
+				"binding": "INVENTORY_KV",
+				"id": "18269a86917943f3a1b26380443f7152"
+			}
+		],
+		// ...
+	}
 }
